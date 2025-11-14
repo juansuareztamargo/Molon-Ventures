@@ -1,0 +1,30 @@
+{
+  "name": "molon-ventures-slingshot",
+  "version": "1.0.0",
+  "description": "Phaser slingshot demo game",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://juansuareztamargo:ghs_Qdlp1SmRMTt9jbSynZvbbtgLZ15qCh17iMtY@github.com/juansuareztamargo/Molon-Ventures.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/juansuareztamargo/Molon-Ventures/issues"
+  },
+  "homepage": "https://github.com/juansuareztamargo/Molon-Ventures#readme",
+  "dependencies": {
+    "phaser": "^3.90.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  }
+}
