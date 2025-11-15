@@ -1,7 +1,7 @@
 import Phaser from 'phaser';
 import { SCENES } from '@/config/gameConfig';
 import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS } from '@/utils/constants';
-import { createButton, createTextStyle, distanceBetween } from '@/utils/helpers';
+import { createButton, createTextStyle } from '@/utils/helpers';
 
 interface TargetData {
   sprite: Phaser.Physics.Arcade.Sprite;
@@ -10,6 +10,19 @@ interface TargetData {
   lifetime: number;
   initialRadius: number;
   hit: boolean;
+  missTriggered: boolean;
+}
+
+interface JoypadUI {
+  container: Phaser.GameObjects.Container;
+  base: Phaser.GameObjects.Arc;
+  knob: Phaser.GameObjects.Arc;
+  powerLine: Phaser.GameObjects.Graphics;
+  trajectoryLine: Phaser.GameObjects.Graphics;
+  centerX: number;
+  centerY: number;
+  offsetX: number;
+  offsetY: number;
 }
 
 export class SlingshotScene extends Phaser.Scene {
@@ -19,18 +32,15 @@ export class SlingshotScene extends Phaser.Scene {
   private instructionsText!: Phaser.GameObjects.Text;
   private projectileCountText!: Phaser.GameObjects.Text;
 
-  private slingshot!: Phaser.GameObjects.Graphics;
-  private slingshotX: number = 200;
-  private slingshotY: number = 500;
-
   private isDragging: boolean = false;
-  private dragLine!: Phaser.GameObjects.Graphics;
   private currentProjectile?: Phaser.Physics.Arcade.Sprite;
-  private launchedProjectiles: Phaser.Physics.Arcade.Sprite[] = [];
 
   private targets: TargetData[] = [];
   private ground!: Phaser.GameObjects.Rectangle;
-  private reloadScheduled: boolean = false;
+
+  private joypad?: JoypadUI;
+  private projectileIdleTimer: number = 0;
+  private readonly projectileIdleThreshold: number = 1500;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -40,7 +50,6 @@ export class SlingshotScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
 
-    // Create ground
     this.ground = this.add.rectangle(
       width / 2,
       height - GAME_SETTINGS.GROUND_HEIGHT / 2,
@@ -50,50 +59,41 @@ export class SlingshotScene extends Phaser.Scene {
     );
     this.physics.add.existing(this.ground, true);
 
-    // Create slingshot base
-    this.createSlingshot();
-
-    // Create UI overlay
     this.createUI();
-
-    // Create the first projectile
-    this.createProjectile();
-
-    // Create drag line graphics
-    this.dragLine = this.add.graphics();
-
-    // Set up input
     this.setupInput();
-
-    // Start spawning targets
     this.startTargetSpawning();
   }
 
-  update(): void {
+  update(_time: number, delta: number): void {
     this.updateTargets();
 
-    if (this.currentProjectile && !this.isDragging && !this.reloadScheduled) {
+    if (this.currentProjectile && !this.isDragging) {
       const sprite = this.currentProjectile;
       const body = sprite.body as Phaser.Physics.Arcade.Body;
-      
-      const isOffscreen = 
+
+      const isOffscreen =
         sprite.x < -50 ||
         sprite.x > this.scale.width + 50 ||
-        sprite.y > this.scale.height + 50;
-      
-      const hasSettled = 
-        Math.abs(body.velocity.x) < 1 && 
-        Math.abs(body.velocity.y) < 1 && 
-        sprite.y > this.slingshotY - 10;
-      
-      if (isOffscreen || hasSettled) {
-        this.reloadScheduled = true;
-        this.time.delayedCall(500, () => {
-          if (!this.isDragging) {
-            this.prepareNextShot();
-            this.reloadScheduled = false;
-          }
-        });
+        sprite.y > this.scale.height + 50 ||
+        sprite.y < -50;
+
+      const hasLowVelocity =
+        Math.abs(body.velocity.x) < 1 &&
+        Math.abs(body.velocity.y) < 1;
+
+      if (isOffscreen) {
+        this.prepareNextShot();
+      } else if (
+        hasLowVelocity &&
+        sprite.y > this.scale.height - GAME_SETTINGS.GROUND_HEIGHT - 30
+      ) {
+        this.projectileIdleTimer += delta;
+
+        if (this.projectileIdleTimer >= this.projectileIdleThreshold) {
+          this.prepareNextShot();
+        }
+      } else {
+        this.projectileIdleTimer = 0;
       }
     }
 
@@ -104,54 +104,15 @@ export class SlingshotScene extends Phaser.Scene {
     }
   }
 
-  private createSlingshot(): void {
-    this.slingshot = this.add.graphics();
-    this.drawSlingshot();
-  }
-
-  private drawSlingshot(pullX?: number, pullY?: number): void {
-    this.slingshot.clear();
-
-    // Draw slingshot posts
-    this.slingshot.fillStyle(COLORS.SLINGSHOT);
-    this.slingshot.fillRect(this.slingshotX - 35, this.slingshotY - 60, 10, 60);
-    this.slingshot.fillRect(this.slingshotX + 25, this.slingshotY - 60, 10, 60);
-
-    // Draw elastic bands
-    if (pullX !== undefined && pullY !== undefined) {
-      this.slingshot.lineStyle(3, COLORS.SLINGSHOT, 1);
-      this.slingshot.beginPath();
-      this.slingshot.moveTo(this.slingshotX - 30, this.slingshotY - 60);
-      this.slingshot.lineTo(pullX, pullY);
-      this.slingshot.strokePath();
-
-      this.slingshot.beginPath();
-      this.slingshot.moveTo(this.slingshotX + 30, this.slingshotY - 60);
-      this.slingshot.lineTo(pullX, pullY);
-      this.slingshot.strokePath();
-    } else {
-      this.slingshot.lineStyle(3, COLORS.SLINGSHOT, 1);
-      this.slingshot.beginPath();
-      this.slingshot.moveTo(this.slingshotX - 30, this.slingshotY - 60);
-      this.slingshot.lineTo(this.slingshotX, this.slingshotY - 30);
-      this.slingshot.lineTo(this.slingshotX + 30, this.slingshotY - 60);
-      this.slingshot.strokePath();
-    }
-
-    // Draw base
-    this.slingshot.fillStyle(COLORS.SLINGSHOT);
-    this.slingshot.fillRect(this.slingshotX - 50, this.slingshotY, 100, 20);
-  }
-
   private startTargetSpawning(): void {
     this.time.addEvent({
-      delay: 3000,
+      delay: 3200,
+      loop: true,
       callback: () => {
         if (this.targets.length < 2) {
           this.spawnTarget();
         }
       },
-      loop: true,
     });
 
     this.time.delayedCall(500, () => {
@@ -164,34 +125,33 @@ export class SlingshotScene extends Phaser.Scene {
     const height = this.scale.height;
     const groundY = height - GAME_SETTINGS.GROUND_HEIGHT;
 
-    const spawnX = Phaser.Math.Between(400, width - 200);
-    const initialRadius = 50;
-    const lifetime = 4000;
+    const spawnX = Phaser.Math.Between(250, width - 250);
+    const initialRadius = 54;
+    const lifetime = 6500;
 
     const sprite = this.physics.add.sprite(spawnX, groundY, '');
-    sprite.setDisplaySize(initialRadius * 2, initialRadius * 2);
-    
+    sprite.setDisplaySize(0, 0);
+    sprite.setVisible(false);
+
     const body = sprite.body as Phaser.Physics.Arcade.Body;
     body.setCircle(initialRadius);
     body.setAllowGravity(true);
-    body.setImmovable(false);
     body.setBounce(0);
     body.setDamping(false);
+    body.setVelocity(Phaser.Math.Between(-40, 40), Phaser.Math.Between(-520, -580));
+    body.setGravityY(-100);
 
     const graphic = this.add.circle(spawnX, groundY, initialRadius, 0xe74c3c);
     graphic.setStrokeStyle(3, COLORS.WHITE, 0.8);
 
-    const velocityX = Phaser.Math.Between(-40, 40);
-    const velocityY = -280;
-    body.setVelocity(velocityX, velocityY);
-
     const targetData: TargetData = {
-      sprite: sprite,
-      graphic: graphic,
+      sprite,
+      graphic,
       startTime: this.time.now,
-      lifetime: lifetime,
-      initialRadius: initialRadius,
+      lifetime,
+      initialRadius,
       hit: false,
+      missTriggered: false,
     };
 
     this.targets.push(targetData);
@@ -201,12 +161,6 @@ export class SlingshotScene extends Phaser.Scene {
         this.handleTargetHit(targetData);
       });
     }
-
-    this.launchedProjectiles.forEach((projectile) => {
-      this.physics.add.overlap(projectile, sprite, () => {
-        this.handleTargetHit(targetData);
-      });
-    });
   }
 
   private updateTargets(): void {
@@ -219,10 +173,7 @@ export class SlingshotScene extends Phaser.Scene {
       const progress = Math.min(elapsed / targetData.lifetime, 1);
       const timeRemaining = 1 - progress;
 
-      const currentRadius = Math.max(
-        targetData.initialRadius * timeRemaining,
-        5
-      );
+      const currentRadius = Math.max(targetData.initialRadius * timeRemaining, 12);
       targetData.graphic.setRadius(currentRadius);
 
       const body = targetData.sprite.body as Phaser.Physics.Arcade.Body;
@@ -239,27 +190,60 @@ export class SlingshotScene extends Phaser.Scene {
         color = 0x2ecc71;
       } else {
         color = 0x9b59b6;
+
+        if (!targetData.missTriggered) {
+          targetData.missTriggered = true;
+          this.handleTargetMiss(targetData);
+        }
       }
+
       targetData.graphic.setFillStyle(color, 1);
 
-      const alpha = Math.max(timeRemaining, 0);
+      const alpha = Phaser.Math.Clamp(timeRemaining * 1.2, 0, 1);
       targetData.graphic.setAlpha(alpha);
-      targetData.sprite.setAlpha(alpha);
 
       if (progress >= 1) {
         this.removeTarget(targetData);
+        this.time.delayedCall(600, () => this.spawnTarget());
       }
     });
 
-    this.targets = this.targets.filter((t) => !t.hit || t.sprite.active);
+    this.targets = this.targets.filter((target) => target.graphic.active);
   }
 
-  private createProjectile(): void {
+  private handleTargetMiss(targetData: TargetData): void {
+    const x = targetData.sprite.x;
+    const y = targetData.sprite.y;
+
+    const missText = this.add.text(x, y, 'MISS', {
+      fontSize: '28px',
+      color: '#9b59b6',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
+    });
+    missText.setOrigin(0.5);
+    missText.setDepth(100);
+
+    this.tweens.add({
+      targets: missText,
+      y: y - 50,
+      alpha: 0,
+      duration: 750,
+      ease: 'Cubic.easeOut',
+      onComplete: () => missText.destroy(),
+    });
+
+    if (this.currentProjectile && !this.isDragging) {
+      this.prepareNextShot();
+    }
+  }
+
+  private createProjectile(x: number, y: number): void {
     if (this.projectileCount <= 0) {
       return;
     }
 
-    // Create projectile texture if not exists
     if (!this.textures.exists('projectile')) {
       const graphics = this.add.graphics();
       graphics.fillStyle(COLORS.PROJECTILE, 1);
@@ -270,110 +254,206 @@ export class SlingshotScene extends Phaser.Scene {
       graphics.destroy();
     }
 
-    this.currentProjectile = this.physics.add.sprite(
-      this.slingshotX,
-      this.slingshotY - 30,
-      'projectile'
-    );
-    
+    this.currentProjectile = this.physics.add.sprite(x, y, 'projectile');
+
     const body = this.currentProjectile.body as Phaser.Physics.Arcade.Body;
     body.setCollideWorldBounds(false);
-    body.setBounce(0.5);
+    body.setBounce(0.2);
     body.setCircle(15);
     body.setMass(0.5);
     body.setAllowGravity(false);
 
-    this.currentProjectile.setInteractive({ draggable: true });
+    this.currentProjectile.setDepth(60);
   }
 
   private setupInput(): void {
-    this.input.on('dragstart', (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-      if (gameObject === this.currentProjectile && !this.isDragging) {
-        this.isDragging = true;
-      }
+    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+      if (this.isDragging || this.currentProjectile) return;
+
+      this.isDragging = true;
+      this.createJoypad(pointer.x, pointer.y);
+      this.createProjectile(pointer.x, pointer.y);
     });
 
-    this.input.on('drag', (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject, _dragX: number, _dragY: number) => {
-      if (gameObject === this.currentProjectile && this.isDragging) {
-        const distance = distanceBetween(this.slingshotX, this.slingshotY - 30, pointer.x, pointer.y);
-        
-        if (distance <= INPUT_THRESHOLDS.DRAG_MAX_DISTANCE) {
-          this.currentProjectile!.setPosition(pointer.x, pointer.y);
-        } else {
-          const angle = Math.atan2(pointer.y - (this.slingshotY - 30), pointer.x - this.slingshotX);
-          const clampedX = this.slingshotX + Math.cos(angle) * INPUT_THRESHOLDS.DRAG_MAX_DISTANCE;
-          const clampedY = (this.slingshotY - 30) + Math.sin(angle) * INPUT_THRESHOLDS.DRAG_MAX_DISTANCE;
-          this.currentProjectile!.setPosition(clampedX, clampedY);
-        }
+    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+      if (!this.isDragging || !this.joypad || !this.currentProjectile) return;
 
-        this.drawDragLine();
-        this.drawSlingshot(this.currentProjectile!.x, this.currentProjectile!.y);
-      }
+      this.updateJoypad(pointer.x, pointer.y);
     });
 
-    this.input.on('dragend', (_pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.GameObject) => {
-      if (gameObject === this.currentProjectile && this.isDragging) {
-        this.launchProjectile();
-        this.isDragging = false;
+    const releaseProjectile = (pointer: Phaser.Input.Pointer) => {
+      if (!this.isDragging || !this.joypad || !this.currentProjectile) return;
+
+      if (this.launchProjectile()) {
+        this.destroyJoypad();
+      } else {
+        this.prepareNextShot();
       }
-    });
+
+      this.isDragging = false;
+    };
+
+    this.input.on('pointerup', releaseProjectile);
+    this.input.on('pointerupoutside', releaseProjectile);
   }
 
-  private drawDragLine(): void {
-    if (!this.currentProjectile) return;
+  private createJoypad(x: number, y: number): void {
+    const container = this.add.container(0, 0);
 
-    this.dragLine.clear();
-    this.dragLine.lineStyle(2, COLORS.WHITE, 0.8);
-    this.dragLine.beginPath();
-    this.dragLine.moveTo(this.slingshotX, this.slingshotY - 30);
-    this.dragLine.lineTo(this.currentProjectile.x, this.currentProjectile.y);
-    this.dragLine.strokePath();
+    const base = this.add.circle(x, y, 82, COLORS.WHITE, 0.22);
+    base.setStrokeStyle(3, COLORS.WHITE, 0.55);
 
-    // Draw trajectory preview
-    const velocityX = (this.slingshotX - this.currentProjectile.x) * INPUT_THRESHOLDS.VELOCITY_MULTIPLIER;
-    const velocityY = ((this.slingshotY - 30) - this.currentProjectile.y) * INPUT_THRESHOLDS.VELOCITY_MULTIPLIER;
+    const knob = this.add.circle(x, y, 26, COLORS.PRIMARY, 0.72);
+    knob.setStrokeStyle(3, COLORS.WHITE, 0.9);
 
-    this.dragLine.lineStyle(2, COLORS.WARNING, 0.4);
+    const powerLine = this.add.graphics();
+    const trajectoryLine = this.add.graphics();
 
-    for (let t = 0; t < 1; t += 0.05) {
-      const x = this.currentProjectile.x + velocityX * t * 10;
-      const y = this.currentProjectile.y + velocityY * t * 10 + 0.5 * 300 * (t * 10) * (t * 10);
-      
-      this.dragLine.lineTo(x, y);
+    container.add([base, powerLine, trajectoryLine, knob]);
+    container.setDepth(55);
+    container.setAlpha(0);
+    container.setScale(0.85);
 
-      if (x < 0 || x > this.scale.width || y > this.scale.height) break;
+    this.tweens.add({
+      targets: container,
+      alpha: 1,
+      scale: 1,
+      duration: 120,
+      ease: 'Cubic.easeOut',
+    });
+
+    this.joypad = {
+      container,
+      base,
+      knob,
+      powerLine,
+      trajectoryLine,
+      centerX: x,
+      centerY: y,
+      offsetX: 0,
+      offsetY: 0,
+    };
+
+    if (this.currentProjectile) {
+      this.currentProjectile.setPosition(x, y);
     }
-    this.dragLine.strokePath();
   }
 
-  private launchProjectile(): void {
-    if (!this.currentProjectile) return;
+  private updateJoypad(pointerX: number, pointerY: number): void {
+    if (!this.joypad || !this.currentProjectile) return;
 
-    const velocityX = (this.slingshotX - this.currentProjectile.x) * INPUT_THRESHOLDS.VELOCITY_MULTIPLIER;
-    const velocityY = ((this.slingshotY - 30) - this.currentProjectile.y) * INPUT_THRESHOLDS.VELOCITY_MULTIPLIER;
+    const dx = pointerX - this.joypad.centerX;
+    const dy = pointerY - this.joypad.centerY;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    const maxDistance = 90;
 
-    const distance = distanceBetween(
-      this.slingshotX,
-      this.slingshotY - 30,
-      this.currentProjectile.x,
-      this.currentProjectile.y
+    const clampedDistance = Math.min(distance, maxDistance);
+    const angle = Math.atan2(dy, dx);
+
+    const offsetX = Math.cos(angle) * clampedDistance;
+    const offsetY = Math.sin(angle) * clampedDistance;
+
+    this.joypad.knob.setPosition(this.joypad.centerX + offsetX, this.joypad.centerY + offsetY);
+    this.joypad.offsetX = offsetX;
+    this.joypad.offsetY = offsetY;
+
+    this.currentProjectile.setPosition(this.joypad.centerX, this.joypad.centerY);
+
+    this.joypad.powerLine.clear();
+    this.joypad.powerLine.lineStyle(4, COLORS.PRIMARY, 0.6);
+    this.joypad.powerLine.beginPath();
+    this.joypad.powerLine.moveTo(this.joypad.centerX, this.joypad.centerY);
+    this.joypad.powerLine.lineTo(this.joypad.knob.x, this.joypad.knob.y);
+    this.joypad.powerLine.strokePath();
+
+    this.drawTrajectoryPreview();
+  }
+
+  private drawTrajectoryPreview(): void {
+    if (!this.joypad || !this.currentProjectile) return;
+
+    this.joypad.trajectoryLine.clear();
+
+    const dragDistance = Math.sqrt(
+      this.joypad.offsetX * this.joypad.offsetX +
+        this.joypad.offsetY * this.joypad.offsetY
     );
 
-    if (distance < INPUT_THRESHOLDS.DRAG_MIN_DISTANCE) {
-      this.currentProjectile.setPosition(this.slingshotX, this.slingshotY - 30);
-      this.dragLine.clear();
-      this.drawSlingshot();
+    if (dragDistance <= INPUT_THRESHOLDS.DRAG_MIN_DISTANCE) {
       return;
     }
+
+    const velocityMultiplier = 4.2;
+    let vx = -this.joypad.offsetX * velocityMultiplier;
+    let vy = -this.joypad.offsetY * velocityMultiplier;
+
+    const gravity = this.physics.world.gravity.y;
+    const timeStep = 0.05;
+    const maxSteps = 60;
+
+    let px = this.joypad.centerX;
+    let py = this.joypad.centerY;
+
+    this.joypad.trajectoryLine.lineStyle(3, COLORS.WARNING, 0.45);
+    this.joypad.trajectoryLine.beginPath();
+    this.joypad.trajectoryLine.moveTo(px, py);
+
+    for (let i = 0; i < maxSteps; i++) {
+      px += vx * timeStep;
+      py += vy * timeStep;
+      vy += gravity * timeStep;
+
+      this.joypad.trajectoryLine.lineTo(px, py);
+
+      if (px < 0 || px > this.scale.width || py > this.scale.height) {
+        break;
+      }
+    }
+
+    this.joypad.trajectoryLine.strokePath();
+  }
+
+  private destroyJoypad(): void {
+    if (!this.joypad) return;
+
+    const container = this.joypad.container;
+
+    this.tweens.add({
+      targets: container,
+      alpha: 0,
+      scale: 0.8,
+      duration: 120,
+      ease: 'Cubic.easeIn',
+      onComplete: () => container.destroy(),
+    });
+
+    this.joypad = undefined;
+  }
+
+  private launchProjectile(): boolean {
+    if (!this.currentProjectile || !this.joypad) {
+      return false;
+    }
+
+    const dragDistance = Math.sqrt(
+      this.joypad.offsetX * this.joypad.offsetX +
+        this.joypad.offsetY * this.joypad.offsetY
+    );
+
+    if (dragDistance < INPUT_THRESHOLDS.DRAG_MIN_DISTANCE) {
+      return false;
+    }
+
+    const velocityMultiplier = 4.2;
+    const velocityX = -this.joypad.offsetX * velocityMultiplier;
+    const velocityY = -this.joypad.offsetY * velocityMultiplier;
 
     const body = this.currentProjectile.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(true);
     body.setVelocity(velocityX, velocityY);
 
-    this.launchedProjectiles.push(this.currentProjectile);
-
     this.physics.add.collider(this.currentProjectile, this.ground);
-    
+
     this.targets.forEach((targetData) => {
       this.physics.add.overlap(this.currentProjectile!, targetData.sprite, () => {
         this.handleTargetHit(targetData);
@@ -383,10 +463,8 @@ export class SlingshotScene extends Phaser.Scene {
     this.projectileCount--;
     this.updateProjectileCountText();
 
-    this.currentProjectile = undefined;
-
-    this.dragLine.clear();
-    this.drawSlingshot();
+    this.projectileIdleTimer = 0;
+    return true;
   }
 
   private handleTargetHit(targetData: TargetData): void {
@@ -402,7 +480,7 @@ export class SlingshotScene extends Phaser.Scene {
     for (let i = 0; i < 12; i++) {
       const particle = this.add.circle(x, y, 6, currentColor);
       const angle = (Math.PI * 2 * i) / 12;
-      
+
       this.tweens.add({
         targets: particle,
         x: x + Math.cos(angle) * 80,
@@ -427,7 +505,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: scorePopup,
-      y: y - 50,
+      y: y - 60,
       alpha: 0,
       duration: 800,
       ease: 'Cubic.easeOut',
@@ -436,6 +514,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.removeTarget(targetData);
     this.updateScore();
+    this.prepareNextShot();
+    this.time.delayedCall(500, () => this.spawnTarget());
   }
 
   private removeTarget(targetData: TargetData): void {
@@ -446,19 +526,16 @@ export class SlingshotScene extends Phaser.Scene {
 
   private prepareNextShot(): void {
     if (this.currentProjectile) {
-      this.currentProjectile.disableInteractive();
+      this.currentProjectile.destroy();
       this.currentProjectile = undefined;
     }
 
-    if (this.projectileCount > 0 && this.targetsRemaining > 0) {
-      this.createProjectile();
-    }
+    this.projectileIdleTimer = 0;
   }
 
   private createUI(): void {
     const width = this.scale.width;
 
-    // Score/Targets remaining text
     this.scoreText = this.add.text(
       20,
       20,
@@ -467,7 +544,6 @@ export class SlingshotScene extends Phaser.Scene {
     );
     this.scoreText.setOrigin(0);
 
-    // Projectile count text
     this.projectileCountText = this.add.text(
       width - 20,
       20,
@@ -476,16 +552,14 @@ export class SlingshotScene extends Phaser.Scene {
     );
     this.projectileCountText.setOrigin(1, 0);
 
-    // Instructions text
     this.instructionsText = this.add.text(
       width / 2,
       20,
-      'Drag and release to launch',
+      'Tap anywhere, drag to aim, release to launch',
       createTextStyle('20px', '#ffffff')
     );
     this.instructionsText.setOrigin(0.5, 0);
 
-    // All UI elements should have higher depth
     this.scoreText.setDepth(100);
     this.projectileCountText.setDepth(100);
     this.instructionsText.setDepth(100);
@@ -508,18 +582,15 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private showGameOver(message: string, color: number): void {
-    // Prevent multiple calls
     if (this.scene.isPaused()) return;
     this.scene.pause();
 
     const width = this.scale.width;
     const height = this.scale.height;
 
-    // Semi-transparent overlay
     const overlay = this.add.rectangle(width / 2, height / 2, width, height, COLORS.BLACK, 0.7);
     overlay.setDepth(200);
 
-    // Game over text
     const gameOverText = this.add.text(width / 2, height / 2 - 80, message, {
       fontSize: '64px',
       color: `#${color.toString(16).padStart(6, '0')}`,
@@ -531,7 +602,6 @@ export class SlingshotScene extends Phaser.Scene {
     gameOverText.setOrigin(0.5);
     gameOverText.setDepth(201);
 
-    // Stats text
     const statsText = this.add.text(
       width / 2,
       height / 2,
@@ -549,7 +619,6 @@ export class SlingshotScene extends Phaser.Scene {
     statsText.setDepth(201);
     statsText.setLineSpacing(10);
 
-    // Restart button
     const restartButton = createButton(
       this,
       width / 2 - 130,
@@ -563,7 +632,6 @@ export class SlingshotScene extends Phaser.Scene {
     );
     restartButton.setDepth(201);
 
-    // Menu button
     const menuButton = createButton(
       this,
       width / 2 + 130,
@@ -577,7 +645,6 @@ export class SlingshotScene extends Phaser.Scene {
     );
     menuButton.setDepth(201);
 
-    // Add pulsing animation
     this.tweens.add({
       targets: gameOverText,
       scale: { from: 1, to: 1.1 },
