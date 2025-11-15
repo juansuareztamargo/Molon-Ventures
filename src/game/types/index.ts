@@ -1,22 +1,19 @@
-export interface GameObjectConfig {
+export interface Position {
   x: number;
   y: number;
-  texture?: string;
-  frame?: string | number;
 }
 
-export interface PlayerConfig extends GameObjectConfig {
-  speed: number;
-  health: number;
+export interface TargetState {
+  radius: number;
+  color: string;
+  position: Position;
+  isShrinking: boolean;
+  timeRemaining: number;
 }
 
-export interface EnemyConfig extends GameObjectConfig {
-  health: number;
-  damage: number;
-  speed: number;
-}
-
-export interface GameEvent {
-  type: string;
-  data?: any;
+export interface DifficultySettings {
+  startRadius: number;
+  minRadius: number;
+  shrinkDuration: number;
+  respawnDelay: number;
 }
