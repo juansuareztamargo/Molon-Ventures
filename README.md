@@ -1,8 +1,17 @@
-# Phaser 3 TypeScript Vite Scaffold
+# Molon-Ventures Target System
 
-A modern, maintainable foundation for building browser-based games with Phaser 3, TypeScript, and Vite.
+A Phaser 3 + TypeScript implementation of a shrinking, color-changing target mechanic with configurable timing and difficulty parameters.
 
-## 🚀 Features
+## 🎯 Target System Features
+
+- **Smooth Shrinking Animation**: Target smoothly shrinks from configurable start size to minimum radius
+- **Color Transitions**: Dynamic color changes based on remaining time (Red → Orange → Green → Purple)  
+- **Configurable Difficulty**: Four difficulty levels (Easy, Normal, Hard, Expert) with different parameters
+- **Automatic Respawn**: Target respawns at randomized positions after shrinking completes
+- **Event System**: Comprehensive event system for integration with scoring, sound, and other game mechanics
+- **Interactive UI**: Visual indicators for current timing phase and difficulty level
+
+## 🚀 Technology Stack
 
 - **Phaser 3** - Modern 2D game framework
 - **TypeScript** - Type-safe development
@@ -43,6 +52,41 @@ npm run format
 ```
 
 The development server will automatically open at `http://localhost:3000`.
+
+## 🎮 Controls
+
+- **Click Target**: Reset and restart animation
+- **Keys 1-4**: Change difficulty level (1=EASY, 2=NORMAL, 3=HARD, 4=EXPERT)
+- **Key T**: Run system tests
+- **Difficulty Buttons**: Click to change difficulty
+
+## 🎯 Target System Details
+
+### Difficulty Levels
+
+- **EASY**: Start 100px → Min 20px, 7s duration, 1.5s respawn
+- **NORMAL**: Start 80px → Min 10px, 5s duration, 1s respawn (default)
+- **HARD**: Start 60px → Min 8px, 3s duration, 0.5s respawn
+- **EXPERT**: Start 40px → Min 5px, 2s duration, 0.3s respawn
+
+### Color Timing Thresholds
+
+- **RED**: 75%+ time remaining
+- **ORANGE**: 50%-75% time remaining
+- **GREEN**: 25%-50% time remaining
+- **PURPLE**: 0%-25% time remaining
+
+### Acceptance Criteria Met
+
+✅ **Target Animation**: Target appears when gameplay starts, shrinks smoothly to minimum size, and loops/resets after each attempt
+
+✅ **Color Transitions**: Target colors change at configured timing thresholds without jitter or incorrect ordering
+
+✅ **Configurable Parameters**: Config values allow adjusting start size and shrink duration for difficulty control
+
+✅ **Event System**: Comprehensive event emission for color changes, size thresholds, completion, and respawn for future integration
+
+✅ **UI Indicators**: Simple UI overlay showing current timing phase, difficulty level, and remaining time
 
 ## 🏗️ Build
 
