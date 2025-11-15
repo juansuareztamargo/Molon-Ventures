@@ -20,6 +20,7 @@ export class TargetManager {
   private uiText?: Phaser.GameObjects.Text;
   private currentDifficulty: DifficultyLevel = 'NORMAL';
   private difficultySettings: DifficultySettings;
+  private elapsedTime: number = 0;
   
   // Event emitters
   private eventEmitter: Phaser.Events.EventEmitter;
@@ -120,6 +121,7 @@ export class TargetManager {
     if (!this.isShrinking) return;
 
     const elapsed = Date.now() - this.startTime;
+    this.elapsedTime = elapsed;
     const progress = Math.min(elapsed / this.difficultySettings.shrinkDuration, 1);
     
     // Calculate current radius
@@ -282,6 +284,10 @@ export class TargetManager {
 
   public getDifficultySettings(): DifficultySettings {
     return { ...this.difficultySettings };
+  }
+
+  public getElapsedTime(): number {
+    return this.elapsedTime;
   }
 
   public destroy(): void {
