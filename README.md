@@ -1,23 +1,31 @@
-# Molon-Ventures Target System
+# Molon Ventures - Slingshot Game with Target System
 
-A Phaser 3 + TypeScript implementation of a shrinking, color-changing target mechanic with configurable timing and difficulty parameters.
+A physics-based slingshot game built with Phaser 3 and TypeScript. This demo showcases game bootstrap, scene management, and modular architecture suitable for future 3D migration.
 
-## 🎯 Target System Features
+## 🎯 Features
 
+### Core Game Mechanics
+- **Physics-based Slingshot**: Drag and release mechanics with trajectory preview
+- **Target System**: Dynamic shrinking targets with color transitions and scoring
+- **Scene Management**: Boot, Main Menu, and Gameplay scenes with smooth transitions
+- **Modular Architecture**: Separated config, scenes, and utilities for easy extension
+- **Responsive Design**: Automatic scaling and centering across different screen sizes
+- **Interactive UI**: Score tracking, projectile count, and game over states
+
+### Target System Features
 - **Smooth Shrinking Animation**: Target smoothly shrinks from configurable start size to minimum radius
 - **Color Transitions**: Dynamic color changes based on remaining time (Red → Orange → Green → Purple)  
 - **Configurable Difficulty**: Four difficulty levels (Easy, Normal, Hard, Expert) with different parameters
 - **Automatic Respawn**: Target respawns at randomized positions after shrinking completes
 - **Event System**: Comprehensive event system for integration with scoring, sound, and other game mechanics
-- **Interactive UI**: Visual indicators for current timing phase and difficulty level
+- **Visual Feedback**: Hit detection, scoring, and collision feedback with difficulty configuration
 
 ## 🚀 Technology Stack
 
-- **Phaser 3** - Modern 2D game framework
+- **Phaser 3** - Modern 2D game framework with physics engine
 - **TypeScript** - Type-safe development
 - **Vite** - Fast development server and build tool
 - **ESLint & Prettier** - Code quality and formatting
-- **Sass** - CSS preprocessing support
 - **Path aliases** - Clean imports with `@/` prefix
 - **Hot module replacement** - Fast development workflow
 
@@ -49,48 +57,7 @@ npm run lint:fix
 
 # Format code
 npm run format
-```
 
-The development server will automatically open at `http://localhost:3000`.
-
-## 🎮 Controls
-
-- **Click Target**: Reset and restart animation
-- **Keys 1-4**: Change difficulty level (1=EASY, 2=NORMAL, 3=HARD, 4=EXPERT)
-- **Key T**: Run system tests
-- **Difficulty Buttons**: Click to change difficulty
-
-## 🎯 Target System Details
-
-### Difficulty Levels
-
-- **EASY**: Start 100px → Min 20px, 7s duration, 1.5s respawn
-- **NORMAL**: Start 80px → Min 10px, 5s duration, 1s respawn (default)
-- **HARD**: Start 60px → Min 8px, 3s duration, 0.5s respawn
-- **EXPERT**: Start 40px → Min 5px, 2s duration, 0.3s respawn
-
-### Color Timing Thresholds
-
-- **RED**: 75%+ time remaining
-- **ORANGE**: 50%-75% time remaining
-- **GREEN**: 25%-50% time remaining
-- **PURPLE**: 0%-25% time remaining
-
-### Acceptance Criteria Met
-
-✅ **Target Animation**: Target appears when gameplay starts, shrinks smoothly to minimum size, and loops/resets after each attempt
-
-✅ **Color Transitions**: Target colors change at configured timing thresholds without jitter or incorrect ordering
-
-✅ **Configurable Parameters**: Config values allow adjusting start size and shrink duration for difficulty control
-
-✅ **Event System**: Comprehensive event emission for color changes, size thresholds, completion, and respawn for future integration
-
-✅ **UI Indicators**: Simple UI overlay showing current timing phase, difficulty level, and remaining time
-
-## 🏗️ Build
-
-```bash
 # Build for production
 npm run build
 
@@ -98,132 +65,105 @@ npm run build
 npm run preview
 ```
 
-The production build will be output to the `dist/` directory.
+The game will open automatically in your default browser at `http://localhost:3000`.
 
-## 📁 Project Structure
+## 🎮 How to Play
+
+1. Click "START GAME" from the main menu
+2. Drag the projectile backwards from the slingshot to aim
+3. Release to launch the projectile
+4. Hit all targets with the available projectiles to win!
+5. Use keys 1-4 to change difficulty levels
+6. Press T to run target system tests
+
+## 🏗️ Project Structure
 
 ```
 src/
-├── assets/                 # Game assets
-│   ├── images/            # Image files
-│   ├── audio/             # Sound files
-│   └── data/              # JSON data files
-├── config/                # Configuration files
-│   ├── gameConfig.ts      # Phaser game configuration
-│   └── constants.ts       # Game constants
-├── game/                  # Game logic
-│   ├── managers/          # Game managers (e.g., GameManager)
-│   ├── scenes/            # Phaser scenes
-│   └── types/             # TypeScript type definitions
-└── main.ts                # Application entry point
+├── assets/
+│   ├── audio/           # Sound effects and music
+│   ├── data/            # Game data and configuration
+│   └── images/          # Game assets and sprites
+├── config/
+│   ├── constants.ts     # Game constants
+│   ├── gameConfig.ts    # Game configuration and scene keys
+│   └── targetConfig.ts  # Target system configuration
+├── game/
+│   ├── managers/
+│   │   ├── GameManager.ts      # Game state management
+│   │   └── TargetManager.ts    # Target system logic
+│   ├── scenes/
+│   │   ├── BootScene.ts        # Asset loading and initialization
+│   │   ├── MainMenuScene.ts    # Main menu with start button
+│   │   ├── SlingshotScene.ts   # Core gameplay scene
+│   │   └── MainScene.ts        # Target system demo scene
+│   ├── test/
+│   │   └── TargetSystemTest.ts # Automated testing
+│   └── types/
+│       └── index.ts             # TypeScript type definitions
+├── utils/
+│   ├── constants.ts    # Shared constants (colors, thresholds)
+│   ├── helpers.ts      # Utility functions
+│   └── index.ts        # Utility exports
+└── main.ts             # Game initialization
 ```
 
-## 🎮 Getting Started
+## 🎯 Target System Configuration
 
-### Creating a New Scene
+The target system supports four difficulty levels:
 
-```typescript
-import { Scene } from 'phaser';
+- **EASY**: Slower shrink rate, larger minimum size, longer duration
+- **NORMAL**: Balanced gameplay parameters
+- **HARD**: Faster shrink rate, smaller minimum size, shorter duration
+- **EXPERT**: Maximum difficulty with tight timing requirements
 
-export class MyScene extends Scene {
-  constructor() {
-    super({ key: 'MyScene' });
-  }
+## 🧪 Testing
 
-  preload(): void {
-    // Load assets
-    this.load.image('player', 'assets/images/player.png');
-  }
+The game includes automated testing for the target system:
 
-  create(): void {
-    // Create game objects
-    const player = this.add.sprite(400, 300, 'player');
-  }
+- **Color transition tests**: Verify smooth color changes
+- **Size threshold tests**: Check size reduction accuracy
+- **Event system tests**: Validate event emission
+- **Difficulty tests**: Ensure difficulty parameter application
 
-  update(): void {
-    // Game loop logic
-  }
-}
+Press `T` during gameplay to run all tests and see results on screen.
+
+## 🚀 Build
+
+```bash
+npm run build
 ```
 
-### Adding Scenes to Game Config
+The production build will be created in the `dist/` directory.
 
-Update `src/config/gameConfig.ts`:
+## 🔧 Available Scripts
 
-```typescript
-import { MainScene } from '@/game/scenes/MainScene';
-import { MyScene } from '@/game/scenes/MyScene';
-
-export const GameConfig: Phaser.Types.Core.GameConfig = {
-  // ... other config
-  scene: [MainScene, MyScene],
-};
-```
-
-### Using Path Aliases
-
-Instead of relative imports:
-```typescript
-// Instead of this
-import { GameManager } from '../../managers/GameManager';
-
-// Use this
-import { GameManager } from '@/game/managers/GameManager';
-```
-
-## 🎯 Game Development Tips
-
-### Asset Management
-
-- Place images in `src/assets/images/`
-- Place audio files in `src/assets/audio/`
-- Place JSON data in `src/assets/data/`
-- Use Vite's asset import system for optimal loading
-
-### Scene Management
-
-- Each scene should have a unique key
-- Use `this.scene.start('SceneKey')` to transition between scenes
-- Implement proper cleanup in scene's `shutdown()` method
-
-### Performance
-
-- Use object pools for frequently created/destroyed objects
-- Optimize sprite sheets and texture sizes
-- Use Phaser's built-in physics systems efficiently
-
-## 🔧 Configuration
-
-### TypeScript
-
-TypeScript is configured with strict mode enabled. Modify `tsconfig.json` to adjust compiler options.
-
-### ESLint
-
-ESLint rules are defined in `.eslintrc.cjs`. Customize rules based on your team's preferences.
-
-### Prettier
-
-Code formatting rules are in `.prettierrc`. Adjust formatting preferences as needed.
-
-### Vite
-
-Vite configuration is in `vite.config.ts`. Modify for custom build requirements or plugins.
-
-## 📚 Resources
-
-- [Phaser 3 Documentation](https://phaser.io/docs/3.60.0/)
-- [TypeScript Handbook](https://www.typescriptlang.org/docs/)
-- [Vite Documentation](https://vitejs.dev/)
+- `npm run dev` - Start development server with hot reload
+- `npm run build` - Build for production
+- `npm run preview` - Preview production build
+- `npm run type-check` - Run TypeScript type checking
+- `npm run lint` - Run ESLint
+- `npm run lint:fix` - Fix ESLint issues automatically
+- `npm run format` - Format code with Prettier
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests and linting
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## 📄 License
 
 This project is licensed under the MIT License.
+
+## 🔮 Future Enhancements
+
+- Asset loading (sprites, sounds, music)
+- Level progression system
+- 3D graphics migration (Three.js/Babylon.js)
+- Power-ups and special projectiles
+- Score persistence and leaderboards
+- Multiplayer support
+- Mobile touch controls optimization

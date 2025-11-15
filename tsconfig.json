@@ -19,8 +19,8 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-
-    /* Path mapping */
+    
+    /* Path aliases */
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
