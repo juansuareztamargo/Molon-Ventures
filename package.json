@@ -1,0 +1,16 @@
+{
+  "name": "slingshot-game",
+  "version": "1.0.0",
+  "description": "Interactive slingshot game with physics",
+  "main": "index.html",
+  "scripts": {
+    "dev": "live-server --port=8080 --open=index.html",
+    "build": "echo 'No build process needed for vanilla JS'"
+  },
+  "devDependencies": {
+    "live-server": "^1.2.2"
+  },
+  "dependencies": {
+    "phaser": "^3.70.0"
+  }
+}
