@@ -28,7 +28,14 @@ export const UI_STYLES = {
 } as const;
 
 export const GAME_SETTINGS = {
-  INITIAL_PROJECTILES: 5,
-  TARGET_COUNT: 3,
+  INITIAL_PROJECTILES: 15,
   GROUND_HEIGHT: 100,
+  STAGE_PROJECTILES_MULTIPLIER: 3,
+} as const;
+
+export const TARGET_COLORS = {
+  RED: 0xe74c3c,
+  ORANGE: 0xf39c12,
+  GREEN: 0x2ecc71,
+  PURPLE: 0x9b59b6,
 } as const;
