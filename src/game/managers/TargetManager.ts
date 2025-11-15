@@ -240,6 +240,11 @@ export class TargetManager {
     return this.isShrinking;
   }
 
+  public getElapsedTime(): number {
+    if (!this.isShrinking) return 0;
+    return Date.now() - this.startTime;
+  }
+
   public on<T extends keyof TargetEvents>(
     event: T,
     callback: (data: TargetEvents[T]) => void

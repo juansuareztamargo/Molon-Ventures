@@ -3,6 +3,15 @@ import { SCENES } from '@/config/gameConfig';
 import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS } from '@/utils/constants';
 import { createButton, createTextStyle, distanceBetween } from '@/utils/helpers';
 
+interface TargetData {
+  sprite: Phaser.Physics.Arcade.Sprite;
+  graphic: Phaser.GameObjects.Arc;
+  startTime: number;
+  lifetime: number;
+  initialRadius: number;
+  hit: boolean;
+}
+
 export class SlingshotScene extends Phaser.Scene {
   private projectileCount: number = GAME_SETTINGS.INITIAL_PROJECTILES;
   private targetsRemaining: number = GAME_SETTINGS.TARGET_COUNT;
@@ -19,8 +28,9 @@ export class SlingshotScene extends Phaser.Scene {
   private currentProjectile?: Phaser.Physics.Arcade.Sprite;
   private launchedProjectiles: Phaser.Physics.Arcade.Sprite[] = [];
 
-  private targets: Phaser.Physics.Arcade.Sprite[] = [];
+  private targets: TargetData[] = [];
   private ground!: Phaser.GameObjects.Rectangle;
+  private reloadScheduled: boolean = false;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -43,9 +53,6 @@ export class SlingshotScene extends Phaser.Scene {
     // Create slingshot base
     this.createSlingshot();
 
-    // Create targets
-    this.createTargets();
-
     // Create UI overlay
     this.createUI();
 
@@ -57,30 +64,39 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Set up input
     this.setupInput();
+
+    // Start spawning targets
+    this.startTargetSpawning();
   }
 
   update(): void {
-    // Check if projectile is off screen or has settled
-    if (this.currentProjectile && !this.isDragging) {
+    this.updateTargets();
+
+    if (this.currentProjectile && !this.isDragging && !this.reloadScheduled) {
       const sprite = this.currentProjectile;
       const body = sprite.body as Phaser.Physics.Arcade.Body;
       
-      if (
+      const isOffscreen = 
         sprite.x < -50 ||
         sprite.x > this.scale.width + 50 ||
-        sprite.y > this.scale.height + 50 ||
-        (Math.abs(body.velocity.x) < 1 && Math.abs(body.velocity.y) < 1 && sprite.y > this.slingshotY - 10)
-      ) {
-        // Projectile has settled, prepare next shot
+        sprite.y > this.scale.height + 50;
+      
+      const hasSettled = 
+        Math.abs(body.velocity.x) < 1 && 
+        Math.abs(body.velocity.y) < 1 && 
+        sprite.y > this.slingshotY - 10;
+      
+      if (isOffscreen || hasSettled) {
+        this.reloadScheduled = true;
         this.time.delayedCall(500, () => {
           if (!this.isDragging) {
             this.prepareNextShot();
+            this.reloadScheduled = false;
           }
         });
       }
     }
 
-    // Check for win/lose conditions
     if (this.targetsRemaining === 0) {
       this.handleWin();
     } else if (this.projectileCount === 0 && !this.currentProjectile) {
@@ -127,35 +143,115 @@ export class SlingshotScene extends Phaser.Scene {
     this.slingshot.fillRect(this.slingshotX - 50, this.slingshotY, 100, 20);
   }
 
-  private createTargets(): void {
-    const targetPositions = [
-      { x: 700, y: 550 },
-      { x: 850, y: 500 },
-      { x: 900, y: 600 },
-    ];
-
-    targetPositions.forEach((pos) => {
-      const target = this.physics.add.sprite(pos.x, pos.y, '');
-      target.setDisplaySize(40, 40);
-      
-      // Create target graphic
-      const graphics = this.add.graphics();
-      graphics.fillStyle(COLORS.TARGET, 1);
-      graphics.fillRect(0, 0, 40, 40);
-      graphics.lineStyle(3, COLORS.WHITE, 1);
-      graphics.strokeRect(0, 0, 40, 40);
-      graphics.generateTexture('target', 40, 40);
-      graphics.destroy();
-      
-      target.setTexture('target');
-      
-      const body = target.body as Phaser.Physics.Arcade.Body;
-      body.setCollideWorldBounds(true);
-      body.setBounce(0.3);
-      body.setMass(1);
-
-      this.targets.push(target);
+  private startTargetSpawning(): void {
+    this.time.addEvent({
+      delay: 3000,
+      callback: () => {
+        if (this.targets.length < 2) {
+          this.spawnTarget();
+        }
+      },
+      loop: true,
     });
+
+    this.time.delayedCall(500, () => {
+      this.spawnTarget();
+    });
+  }
+
+  private spawnTarget(): void {
+    const width = this.scale.width;
+    const height = this.scale.height;
+    const groundY = height - GAME_SETTINGS.GROUND_HEIGHT;
+
+    const spawnX = Phaser.Math.Between(400, width - 200);
+    const initialRadius = 50;
+    const lifetime = 4000;
+
+    const sprite = this.physics.add.sprite(spawnX, groundY, '');
+    sprite.setDisplaySize(initialRadius * 2, initialRadius * 2);
+    
+    const body = sprite.body as Phaser.Physics.Arcade.Body;
+    body.setCircle(initialRadius);
+    body.setAllowGravity(true);
+    body.setImmovable(false);
+    body.setBounce(0);
+    body.setDamping(false);
+
+    const graphic = this.add.circle(spawnX, groundY, initialRadius, 0xe74c3c);
+    graphic.setStrokeStyle(3, COLORS.WHITE, 0.8);
+
+    const velocityX = Phaser.Math.Between(-40, 40);
+    const velocityY = -280;
+    body.setVelocity(velocityX, velocityY);
+
+    const targetData: TargetData = {
+      sprite: sprite,
+      graphic: graphic,
+      startTime: this.time.now,
+      lifetime: lifetime,
+      initialRadius: initialRadius,
+      hit: false,
+    };
+
+    this.targets.push(targetData);
+
+    if (this.currentProjectile) {
+      this.physics.add.overlap(this.currentProjectile, sprite, () => {
+        this.handleTargetHit(targetData);
+      });
+    }
+
+    this.launchedProjectiles.forEach((projectile) => {
+      this.physics.add.overlap(projectile, sprite, () => {
+        this.handleTargetHit(targetData);
+      });
+    });
+  }
+
+  private updateTargets(): void {
+    const now = this.time.now;
+
+    this.targets.forEach((targetData) => {
+      if (targetData.hit) return;
+
+      const elapsed = now - targetData.startTime;
+      const progress = Math.min(elapsed / targetData.lifetime, 1);
+      const timeRemaining = 1 - progress;
+
+      const currentRadius = Math.max(
+        targetData.initialRadius * timeRemaining,
+        5
+      );
+      targetData.graphic.setRadius(currentRadius);
+
+      const body = targetData.sprite.body as Phaser.Physics.Arcade.Body;
+      body.setCircle(currentRadius);
+
+      targetData.graphic.setPosition(targetData.sprite.x, targetData.sprite.y);
+
+      let color: number;
+      if (timeRemaining >= 0.75) {
+        color = 0xe74c3c;
+      } else if (timeRemaining >= 0.5) {
+        color = 0xf39c12;
+      } else if (timeRemaining >= 0.25) {
+        color = 0x2ecc71;
+      } else {
+        color = 0x9b59b6;
+      }
+      targetData.graphic.setFillStyle(color, 1);
+
+      const alpha = Math.max(timeRemaining, 0);
+      targetData.graphic.setAlpha(alpha);
+      targetData.sprite.setAlpha(alpha);
+
+      if (progress >= 1) {
+        this.removeTarget(targetData);
+      }
+    });
+
+    this.targets = this.targets.filter((t) => !t.hit || t.sprite.active);
   }
 
   private createProjectile(): void {
@@ -264,7 +360,6 @@ export class SlingshotScene extends Phaser.Scene {
     );
 
     if (distance < INPUT_THRESHOLDS.DRAG_MIN_DISTANCE) {
-      // Not dragged enough, reset
       this.currentProjectile.setPosition(this.slingshotX, this.slingshotY - 30);
       this.dragLine.clear();
       this.drawSlingshot();
@@ -277,11 +372,11 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.launchedProjectiles.push(this.currentProjectile);
 
-    // Set up collisions
     this.physics.add.collider(this.currentProjectile, this.ground);
-    this.targets.forEach((target) => {
-      this.physics.add.collider(this.currentProjectile!, target, () => {
-        this.handleTargetHit(target);
+    
+    this.targets.forEach((targetData) => {
+      this.physics.add.overlap(this.currentProjectile!, targetData.sprite, () => {
+        this.handleTargetHit(targetData);
       });
     });
 
@@ -294,30 +389,59 @@ export class SlingshotScene extends Phaser.Scene {
     this.drawSlingshot();
   }
 
-  private handleTargetHit(target: Phaser.Physics.Arcade.Sprite): void {
-    if (!this.targets.includes(target)) return;
+  private handleTargetHit(targetData: TargetData): void {
+    if (targetData.hit) return;
+    targetData.hit = true;
 
-    // Remove target
-    this.targets = this.targets.filter((t) => t !== target);
     this.targetsRemaining--;
 
-    // Create destruction effect
-    for (let i = 0; i < 8; i++) {
-      const particle = this.add.circle(target.x, target.y, 5, COLORS.TARGET);
-      const angle = (Math.PI * 2 * i) / 8;
+    const x = targetData.sprite.x;
+    const y = targetData.sprite.y;
+    const currentColor = targetData.graphic.fillColor;
+
+    for (let i = 0; i < 12; i++) {
+      const particle = this.add.circle(x, y, 6, currentColor);
+      const angle = (Math.PI * 2 * i) / 12;
       
       this.tweens.add({
         targets: particle,
-        x: target.x + Math.cos(angle) * 50,
-        y: target.y + Math.sin(angle) * 50,
+        x: x + Math.cos(angle) * 80,
+        y: y + Math.sin(angle) * 80,
         alpha: 0,
-        duration: 500,
+        scale: 0.5,
+        duration: 600,
+        ease: 'Cubic.easeOut',
         onComplete: () => particle.destroy(),
       });
     }
 
-    target.destroy();
+    const scorePopup = this.add.text(x, y, '+100', {
+      fontSize: '32px',
+      color: '#FFD700',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 4,
+    });
+    scorePopup.setOrigin(0.5);
+    scorePopup.setDepth(100);
+
+    this.tweens.add({
+      targets: scorePopup,
+      y: y - 50,
+      alpha: 0,
+      duration: 800,
+      ease: 'Cubic.easeOut',
+      onComplete: () => scorePopup.destroy(),
+    });
+
+    this.removeTarget(targetData);
     this.updateScore();
+  }
+
+  private removeTarget(targetData: TargetData): void {
+    targetData.sprite.destroy();
+    targetData.graphic.destroy();
+    this.targets = this.targets.filter((t) => t !== targetData);
   }
 
   private prepareNextShot(): void {
