@@ -23,7 +23,7 @@ export const GAME_CONFIG = {
       debug: false,
     },
   },
-  backgroundColor: '#87CEEB',
+  backgroundColor: '#0a0a0a',
   scaling: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH,
