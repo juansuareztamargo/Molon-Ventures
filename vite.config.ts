@@ -12,6 +12,7 @@ export default defineConfig({
     open: true,
   },
   build: {
+    target: 'esnext',
     outDir: 'dist',
     sourcemap: true,
   },
