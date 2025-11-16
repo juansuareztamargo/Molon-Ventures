@@ -58,11 +58,13 @@ export class SlingshotScene extends Phaser.Scene {
 
   private joypad?: JoypadUI;
   private projectileIdleTimer: number = 0;
+  private snappedVelocity?: { vx: number; vy: number };
 
   private roundComplete: boolean = false;
   private gameOver: boolean = false;
   private firstSequenceStarted: boolean = false;
   private sequenceActive: boolean = false;
+  private countdownActive: boolean = false;
   private hitsInSequence: number = 0;
   private missesInSequence: number = 0;
   private sequenceTimer: Phaser.Time.TimerEvent | null = null;
@@ -141,6 +143,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private startCountdown(): void {
+    this.countdownActive = true;
     let countdown = 3;
     
     const width = this.scale.width;
@@ -215,6 +218,7 @@ export class SlingshotScene extends Phaser.Scene {
                       ease: 'Cubic.easeIn',
                       onComplete: () => {
                         countdownText.destroy();
+                        this.countdownActive = false;
                         this.startRound();
                       },
                     });
@@ -455,7 +459,7 @@ export class SlingshotScene extends Phaser.Scene {
 
   private setupInput(): void {
     this.input.on('pointerdown', (_pointer: Phaser.Input.Pointer) => {
-      if (this.isDragging || this.currentProjectile || this.gameOver || this.roundComplete) return;
+      if (this.isDragging || this.currentProjectile || this.gameOver || this.roundComplete || this.countdownActive || !this.sequenceActive) return;
 
       this.isDragging = true;
       const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
@@ -568,24 +572,107 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     const velocityMultiplier = 6.5;
-    const vx = -this.joypad.offsetX * velocityMultiplier;
+    let vx = -this.joypad.offsetX * velocityMultiplier;
     let vy = -this.joypad.offsetY * velocityMultiplier;
 
     const gravity = this.physics.world.gravity.y;
     const timeStep = 0.05;
     const maxSteps = 60;
 
+    // Calculate trajectory points for snap detection
+    const trajectoryPoints: { x: number; y: number }[] = [];
     let px = this.joypad.centerX;
     let py = this.joypad.centerY;
+    let testVy = vy;
 
-    this.joypad.trajectoryLine.lineStyle(3, COLORS.WARNING, 0.45);
+    for (let i = 0; i < maxSteps; i++) {
+      px += vx * timeStep;
+      py += testVy * timeStep;
+      testVy += gravity * timeStep;
+      trajectoryPoints.push({ x: px, y: py });
+
+      if (px < 0 || px > this.scale.width || py > this.scale.height) {
+        break;
+      }
+    }
+
+    // Find nearest target to trajectory
+    let nearestTarget: TargetData | undefined = undefined;
+    let minDistance = Number.MAX_VALUE;
+    const snapThreshold = 120; // Distance threshold for snapping
+
+    this.targets.forEach(target => {
+      if (target.hit) return;
+
+      // Check distance from trajectory points to target center
+      for (const point of trajectoryPoints) {
+        const dist = Math.sqrt(
+          Math.pow(point.x - target.fixedX, 2) +
+          Math.pow(point.y - target.fixedY, 2)
+        );
+
+        if (dist < minDistance) {
+          minDistance = dist;
+          nearestTarget = target;
+        }
+      }
+    });
+
+    // Apply trajectory snapping if near a target
+    let isSnapped = false;
+    let snappedTargetData: TargetData | null = null;
+    
+    if (nearestTarget && minDistance < snapThreshold) {
+      const target: TargetData = nearestTarget;
+      isSnapped = true;
+      snappedTargetData = target;
+      
+      // Calculate velocity needed to reach the target
+      const targetX = target.fixedX;
+      const targetY = target.fixedY;
+      const startX = this.joypad.centerX;
+      const startY = this.joypad.centerY;
+
+      // Calculate adjusted trajectory to hit target
+      const dx = targetX - startX;
+      const dy = targetY - startY;
+      
+      // Simple trajectory adjustment - aim toward target center
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const timeToTarget = distance / (velocityMultiplier * dragDistance * 0.05);
+      
+      const adjustedVx = dx / (timeToTarget * timeStep);
+      const adjustedVy = (dy - 0.5 * gravity * timeToTarget * timeToTarget * timeStep * timeStep) / (timeToTarget * timeStep);
+      
+      // Blend original trajectory with adjusted trajectory for smooth snapping
+      const snapStrength = 0.4;
+      vx = vx * (1 - snapStrength) + adjustedVx * snapStrength;
+      vy = vy * (1 - snapStrength) + adjustedVy * snapStrength;
+      
+      // Store snapped velocity for launch
+      this.snappedVelocity = { vx, vy };
+    } else {
+      // Clear snapped velocity if not snapping
+      this.snappedVelocity = undefined;
+    }
+
+    // Draw trajectory with visual feedback for snapping
+    px = this.joypad.centerX;
+    py = this.joypad.centerY;
+    let drawVy = vy;
+
+    const lineColor = isSnapped ? 0x00ff00 : COLORS.WARNING;
+    const lineAlpha = isSnapped ? 0.7 : 0.45;
+    const lineWidth = isSnapped ? 4 : 3;
+
+    this.joypad.trajectoryLine.lineStyle(lineWidth, lineColor, lineAlpha);
     this.joypad.trajectoryLine.beginPath();
     this.joypad.trajectoryLine.moveTo(px, py);
 
     for (let i = 0; i < maxSteps; i++) {
       px += vx * timeStep;
-      py += vy * timeStep;
-      vy += gravity * timeStep;
+      py += drawVy * timeStep;
+      drawVy += gravity * timeStep;
 
       this.joypad.trajectoryLine.lineTo(px, py);
 
@@ -595,6 +682,12 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     this.joypad.trajectoryLine.strokePath();
+
+    // Draw snap indicator if snapped to target
+    if (isSnapped && snappedTargetData) {
+      this.joypad.trajectoryLine.lineStyle(2, 0x00ff00, 0.5);
+      this.joypad.trajectoryLine.strokeCircle(snappedTargetData.fixedX, snappedTargetData.fixedY, snappedTargetData.graphic.radius + 15);
+    }
   }
 
   private destroyJoypad(): void {
@@ -618,9 +711,19 @@ export class SlingshotScene extends Phaser.Scene {
       return false;
     }
 
-    const velocityMultiplier = 6.5;
-    const velocityX = -this.joypad.offsetX * velocityMultiplier;
-    const velocityY = -this.joypad.offsetY * velocityMultiplier;
+    let velocityX: number;
+    let velocityY: number;
+
+    // Use snapped velocity if available, otherwise use manual aim
+    if (this.snappedVelocity) {
+      velocityX = this.snappedVelocity.vx;
+      velocityY = this.snappedVelocity.vy;
+      this.snappedVelocity = undefined;
+    } else {
+      const velocityMultiplier = 6.5;
+      velocityX = -this.joypad.offsetX * velocityMultiplier;
+      velocityY = -this.joypad.offsetY * velocityMultiplier;
+    }
 
     const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(true);
@@ -686,6 +789,7 @@ export class SlingshotScene extends Phaser.Scene {
     });
 
     this.prepareNextShot();
+    this.destroyJoypad();
   }
 
   private handleTargetHit(targetData: TargetData): void {
@@ -760,7 +864,14 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.removeTarget(targetData);
     this.updatePowderText();
+    
+    // Immediately destroy projectile on hit
     this.prepareNextShot();
+    
+    // Clear joypad UI if there are more targets remaining in sequence
+    if (this.targetsRemainingInRound > 0) {
+      this.destroyJoypad();
+    }
   }
 
   private removeTarget(targetData: TargetData): void {
@@ -823,6 +934,7 @@ export class SlingshotScene extends Phaser.Scene {
       ease: 'Linear',
       onComplete: () => {
         this.prepareNextShot();
+        this.destroyJoypad();
       },
     });
   }
@@ -1006,6 +1118,17 @@ export class SlingshotScene extends Phaser.Scene {
           // Restart same sequence with countdown
           this.roundComplete = false;
           this.sequenceActive = false;
+          this.hitsInSequence = 0;
+          this.missesInSequence = 0;
+          
+          // Clean up any existing projectiles and joypad
+          this.prepareNextShot();
+          this.destroyJoypad();
+          
+          // Clean up any remaining targets
+          this.targets.forEach(target => this.removeTarget(target));
+          this.targets = [];
+          
           this.startCountdown();
         } else {
           // Move to next sequence (CONTINUE)
