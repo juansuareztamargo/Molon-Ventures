@@ -61,7 +61,6 @@ export class SlingshotScene extends Phaser.Scene {
 
   private roundComplete: boolean = false;
   private gameOver: boolean = false;
-  private countdownActive: boolean = false;
   private firstSequenceStarted: boolean = false;
   private sequenceActive: boolean = false;
   private hitsInSequence: number = 0;
@@ -91,6 +90,11 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    // Don't update game state when round is complete or game is over
+    if (this.roundComplete || this.gameOver) {
+      return;
+    }
+
     this.updateTargets();
 
     if (this.currentProjectile && !this.isDragging) {
@@ -137,7 +141,6 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private startCountdown(): void {
-    this.countdownActive = true;
     let countdown = 3;
     
     const width = this.scale.width;
@@ -169,7 +172,7 @@ export class SlingshotScene extends Phaser.Scene {
       ease: 'Cubic.easeOut',
     });
     
-    const countdownEvent = this.time.addEvent({
+    this.time.addEvent({
       delay: 1000,
       repeat: 3,
       callback: () => {
@@ -212,7 +215,6 @@ export class SlingshotScene extends Phaser.Scene {
                       ease: 'Cubic.easeIn',
                       onComplete: () => {
                         countdownText.destroy();
-                        this.countdownActive = false;
                         this.startRound();
                       },
                     });
@@ -452,8 +454,8 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private setupInput(): void {
-    this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (this.isDragging || this.currentProjectile || this.gameOver || this.countdownActive) return;
+    this.input.on('pointerdown', (_pointer: Phaser.Input.Pointer) => {
+      if (this.isDragging || this.currentProjectile || this.gameOver || this.roundComplete) return;
 
       this.isDragging = true;
       const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
@@ -721,25 +723,8 @@ export class SlingshotScene extends Phaser.Scene {
       this.bestHit = powderReward;
     }
 
-    const particleCount = powderReward * 5;
-    const particleSpeed = powderReward * 20;
-    const particleSize = 4 + powderReward;
-
-    for (let i = 0; i < particleCount; i++) {
-      const particle = this.add.circle(x, y, particleSize, currentColor);
-      const angle = (Math.PI * 2 * i) / particleCount;
-
-      this.tweens.add({
-        targets: particle,
-        x: x + Math.cos(angle) * particleSpeed,
-        y: y + Math.sin(angle) * particleSpeed,
-        alpha: 0,
-        scale: 0.3,
-        duration: 400 + powderReward * 100,
-        ease: 'Cubic.easeOut',
-        onComplete: () => particle.destroy(),
-      });
-    }
+    // Create particle explosion effect based on hit quality
+    this.createHitParticleExplosion(x, y, currentColor, powderReward);
 
     const hitText = this.add.text(x, y - 20, hitQuality, {
       fontSize: '24px',
@@ -783,6 +768,47 @@ export class SlingshotScene extends Phaser.Scene {
     targetData.graphic.destroy();
     targetData.ring.destroy();
     this.targets = this.targets.filter((t) => t !== targetData);
+  }
+
+  private createHitParticleExplosion(x: number, y: number, color: number, quality: number): void {
+    // Create a temporary texture for particles if it doesn't exist
+    const particleKey = `particle_${color}`;
+    if (!this.textures.exists(particleKey)) {
+      const graphics = this.add.graphics();
+      graphics.fillStyle(color, 1);
+      graphics.fillCircle(4, 4, 4);
+      graphics.generateTexture(particleKey, 8, 8);
+      graphics.destroy();
+    }
+
+    // Configure particle emitter based on hit quality
+    // RED (quality 1): subtle, ORANGE (2): medium, GREEN (3): large, PURPLE (4): spectacular
+    const particleCount: number = quality * 15; // 15, 30, 45, 60 particles
+    const particleSpeed: number = quality * 100; // 100, 200, 300, 400 speed
+    const particleLifespan: number = 500 + quality * 200; // 700ms, 900ms, 1100ms, 1300ms
+    const particleScale: number = 0.8 + quality * 0.3; // 1.1, 1.4, 1.7, 2.0 scale
+
+    // Create particle emitter
+    const particles = this.add.particles(x, y, particleKey, {
+      speed: { min: particleSpeed * 0.5, max: particleSpeed },
+      angle: { min: 0, max: 360 },
+      scale: { start: particleScale, end: 0 },
+      alpha: { start: 1, end: 0 },
+      lifespan: particleLifespan,
+      blendMode: 'ADD',
+      frequency: -1,
+      quantity: particleCount,
+    });
+
+    particles.setDepth(150);
+
+    // Emit particles once
+    particles.explode(particleCount, x, y);
+
+    // Clean up the emitter after particles finish
+    this.time.delayedCall(particleLifespan + 100, () => {
+      particles.destroy();
+    });
   }
 
   private fadeOutProjectile(): void {
@@ -875,7 +901,8 @@ export class SlingshotScene extends Phaser.Scene {
       this.sequenceTimer = null;
     }
     
-    this.scene.pause();
+    // Don't pause the scene - just use the roundComplete flag to control updates
+    // This ensures buttons remain interactive
 
     const width = this.scale.width;
     const height = this.scale.height;
@@ -977,11 +1004,11 @@ export class SlingshotScene extends Phaser.Scene {
         
         if (buttonText === 'TRY AGAIN') {
           // Restart same sequence with countdown
+          this.roundComplete = false;
           this.sequenceActive = false;
-          this.scene.resume();
           this.startCountdown();
         } else {
-          // Move to next sequence
+          // Move to next sequence (CONTINUE)
           this.nextRound();
         }
       },
@@ -1017,20 +1044,19 @@ export class SlingshotScene extends Phaser.Scene {
   private nextRound(): void {
     this.currentRound++;
     this.roundComplete = false;
-    this.scene.resume();
 
     this.targets.forEach((target) => this.removeTarget(target));
     this.targets = [];
     this.prepareNextShot();
 
-    // Start next sequence immediately (no countdown after first)
-    this.startRound();
+    // Start next sequence with countdown for consistency
+    this.startCountdown();
   }
 
   private handleGameOver(): void {
     if (this.gameOver) return;
     this.gameOver = true;
-    this.scene.pause();
+    // Don't pause the scene - the gameOver flag prevents further updates
 
     const width = this.scale.width;
     const height = this.scale.height;
