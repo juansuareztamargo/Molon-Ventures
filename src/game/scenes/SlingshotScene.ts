@@ -61,6 +61,12 @@ export class SlingshotScene extends Phaser.Scene {
 
   private roundComplete: boolean = false;
   private gameOver: boolean = false;
+  private countdownActive: boolean = false;
+  private firstSequenceStarted: boolean = false;
+  private sequenceActive: boolean = false;
+  private hitsInSequence: number = 0;
+  private missesInSequence: number = 0;
+  private sequenceTimer: Phaser.Time.TimerEvent | null = null;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -81,7 +87,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.createUI();
     this.setupInput();
-    this.startRound();
+    this.startCountdown();
   }
 
   update(_time: number, delta: number): void {
@@ -105,7 +111,7 @@ export class SlingshotScene extends Phaser.Scene {
       const isOnGround = sprite.y > this.scale.height - GAME_SETTINGS.GROUND_HEIGHT - 30;
 
       if (isOffscreen && !this.currentProjectile.fadingOut) {
-        this.prepareNextShot();
+        this.handleOffscreenProjectile();
       } else if (hasLowVelocity && isOnGround && !this.currentProjectile.fadingOut) {
         this.projectileIdleTimer += delta;
 
@@ -124,9 +130,100 @@ export class SlingshotScene extends Phaser.Scene {
     if (this.targetsRemainingInRound === 0 && 
         this.targetsSpawnedInRound === this.targetsInRound && 
         !this.roundComplete && 
-        !this.gameOver) {
-      this.handleRoundComplete();
+        !this.gameOver &&
+        this.sequenceActive) {
+      this.handleSequenceComplete();
     }
+  }
+
+  private startCountdown(): void {
+    this.countdownActive = true;
+    let countdown = 3;
+    
+    const width = this.scale.width;
+    const height = this.scale.height;
+    
+    const countdownText = this.add.text(
+      width / 2,
+      height / 2,
+      countdown.toString(),
+      {
+        fontSize: '120px',
+        color: '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 8,
+      }
+    );
+    countdownText.setOrigin(0.5);
+    countdownText.setDepth(300);
+    countdownText.setAlpha(0);
+    
+    // Initial fade in
+    this.tweens.add({
+      targets: countdownText,
+      alpha: 1,
+      scale: { from: 0.5, to: 1 },
+      duration: 300,
+      ease: 'Cubic.easeOut',
+    });
+    
+    const countdownEvent = this.time.addEvent({
+      delay: 1000,
+      repeat: 3,
+      callback: () => {
+        if (countdown > 0) {
+          // Pulse and fade out current number
+          this.tweens.add({
+            targets: countdownText,
+            scale: 1.2,
+            alpha: 0,
+            duration: 300,
+            ease: 'Cubic.easeIn',
+            onComplete: () => {
+              countdown--;
+              if (countdown > 0) {
+                // Show next number
+                countdownText.setText(countdown.toString());
+                this.tweens.add({
+                  targets: countdownText,
+                  alpha: 1,
+                  scale: { from: 0.5, to: 1 },
+                  duration: 300,
+                  ease: 'Cubic.easeOut',
+                });
+              } else {
+                // Show "START!" and begin game
+                countdownText.setText('START!');
+                countdownText.setStyle({ color: '#00FF00' });
+                this.tweens.add({
+                  targets: countdownText,
+                  alpha: 1,
+                  scale: { from: 0.5, to: 1.2 },
+                  duration: 400,
+                  ease: 'Cubic.easeOut',
+                  onComplete: () => {
+                    this.tweens.add({
+                      targets: countdownText,
+                      alpha: 0,
+                      scale: 1.5,
+                      duration: 500,
+                      ease: 'Cubic.easeIn',
+                      onComplete: () => {
+                        countdownText.destroy();
+                        this.countdownActive = false;
+                        this.startRound();
+                      },
+                    });
+                  },
+                });
+              }
+            },
+          });
+        }
+      },
+    });
   }
 
   private startRound(): void {
@@ -134,9 +231,41 @@ export class SlingshotScene extends Phaser.Scene {
     this.targetsRemainingInRound = this.targetsInRound;
     this.targetsSpawnedInRound = 0;
     this.roundComplete = false;
+    this.sequenceActive = true;
+    this.hitsInSequence = 0;
+    this.missesInSequence = 0;
+    
+    // Clear any existing targets
+    this.targets.forEach(target => this.removeTarget(target));
+    this.targets = [];
+    
     this.updateRoundText();
     this.updateSequenceProgressText();
+    
+    if (!this.firstSequenceStarted) {
+      this.firstSequenceStarted = true;
+    }
+    
+    // Start the continuous sequence
+    this.startContinuousSequence();
+  }
+
+  private startContinuousSequence(): void {
+    // Spawn first target immediately
     this.spawnNextTargetInSequence();
+    
+    // Set up automatic spawning for remaining targets
+    if (this.sequenceTimer) {
+      this.sequenceTimer.remove();
+    }
+    
+    this.sequenceTimer = this.time.addEvent({
+      delay: GAME_SETTINGS.TARGET_SPAWN_DELAY,
+      repeat: this.targetsInRound - 1, // Already spawned first one
+      callback: () => {
+        this.spawnNextTargetInSequence();
+      },
+    });
   }
 
   private spawnNextTargetInSequence(): void {
@@ -281,10 +410,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.removeTarget(targetData);
     this.targetsRemainingInRound--;
-
-    this.time.delayedCall(1000, () => {
-      this.spawnNextTargetInSequence();
-    });
+    this.missesInSequence++;
   }
 
   private createProjectile(x: number, y: number): void {
@@ -327,12 +453,14 @@ export class SlingshotScene extends Phaser.Scene {
 
   private setupInput(): void {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (this.isDragging || this.currentProjectile || this.gameOver) return;
+      if (this.isDragging || this.currentProjectile || this.gameOver || this.countdownActive) return;
 
       this.isDragging = true;
       const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
-      this.createJoypad(pointer.x, groundY);
-      this.createProjectile(pointer.x, groundY);
+      // Auto-drag from center: always position joypad at screen center for consistency
+      const centerX = this.scale.width / 2;
+      this.createJoypad(centerX, groundY);
+      this.createProjectile(centerX, groundY);
     });
 
     this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
@@ -520,11 +648,50 @@ export class SlingshotScene extends Phaser.Scene {
     return true;
   }
 
+  private handleOffscreenProjectile(): void {
+    // Create miss feedback at edge of screen
+    let missX = this.scale.width / 2;
+    let missY = this.scale.height / 2;
+    
+    if (this.currentProjectile) {
+      const sprite = this.currentProjectile.sprite;
+      if (sprite.x < 0) missX = 50;
+      else if (sprite.x > this.scale.width) missX = this.scale.width - 50;
+      else missX = sprite.x;
+      
+      if (sprite.y < 0) missY = 50;
+      else if (sprite.y > this.scale.height) missY = this.scale.height - 50;
+      else missY = sprite.y;
+    }
+
+    const missText = this.add.text(missX, missY, 'MISS', {
+      fontSize: '32px',
+      color: '#e74c3c',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 5,
+    });
+    missText.setOrigin(0.5);
+    missText.setDepth(100);
+
+    this.tweens.add({
+      targets: missText,
+      y: missY - 60,
+      alpha: 0,
+      duration: 800,
+      ease: 'Cubic.easeOut',
+      onComplete: () => missText.destroy(),
+    });
+
+    this.prepareNextShot();
+  }
+
   private handleTargetHit(targetData: TargetData): void {
     if (targetData.hit) return;
     targetData.hit = true;
 
     this.targetsRemainingInRound--;
+    this.hitsInSequence++;
     this.updateSequenceProgressText();
 
     const x = targetData.fixedX;
@@ -609,10 +776,6 @@ export class SlingshotScene extends Phaser.Scene {
     this.removeTarget(targetData);
     this.updatePowderText();
     this.prepareNextShot();
-
-    this.time.delayedCall(GAME_SETTINGS.TARGET_SPAWN_DELAY, () => {
-      this.spawnNextTargetInSequence();
-    });
   }
 
   private removeTarget(targetData: TargetData): void {
@@ -702,36 +865,90 @@ export class SlingshotScene extends Phaser.Scene {
     this.sequenceProgressText.setText(`Targets: ${completed}/${this.targetsInRound}`);
   }
 
-  private handleRoundComplete(): void {
+  private handleSequenceComplete(): void {
     this.roundComplete = true;
+    this.sequenceActive = false;
+    
+    // Clean up sequence timer
+    if (this.sequenceTimer) {
+      this.sequenceTimer.remove();
+      this.sequenceTimer = null;
+    }
+    
     this.scene.pause();
 
     const width = this.scale.width;
     const height = this.scale.height;
 
+    // Calculate sequence score
+    const totalTargets = this.hitsInSequence + this.missesInSequence;
+    const accuracy = totalTargets > 0 ? (this.hitsInSequence / totalTargets) * 100 : 0;
+    
+    let scoreTier: string;
+    let scoreColor: string;
+    let buttonText: string;
+    
+    if (accuracy <= 25) {
+      scoreTier = 'BAD';
+      scoreColor = '#e74c3c';
+      buttonText = 'TRY AGAIN';
+    } else if (accuracy <= 50) {
+      scoreTier = 'NICE';
+      scoreColor = '#f39c12';
+      buttonText = 'CONTINUE';
+    } else if (accuracy <= 75) {
+      scoreTier = 'GOOD';
+      scoreColor = '#2ecc71';
+      buttonText = 'CONTINUE';
+    } else if (accuracy <= 90) {
+      scoreTier = 'PERFECT';
+      scoreColor = '#3498db';
+      buttonText = 'CONTINUE';
+    } else {
+      scoreTier = 'OUTSTANDING';
+      scoreColor = '#9b59b6';
+      buttonText = 'CONTINUE';
+    }
+
     const overlay = this.add.rectangle(width / 2, height / 2, width, height, COLORS.BLACK, 0.7);
     overlay.setDepth(200);
 
-    const roundCompleteText = this.add.text(
+    const sequenceCompleteText = this.add.text(
       width / 2,
-      height / 2 - 100,
-      `ROUND ${this.currentRound} COMPLETE!`,
+      height / 2 - 120,
+      `SEQUENCE ${this.currentRound} COMPLETE!`,
       {
-        fontSize: '56px',
-        color: '#00FF00',
+        fontSize: '48px',
+        color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 6,
       }
     );
-    roundCompleteText.setOrigin(0.5);
-    roundCompleteText.setDepth(201);
+    sequenceCompleteText.setOrigin(0.5);
+    sequenceCompleteText.setDepth(201);
+
+    const scoreText = this.add.text(
+      width / 2,
+      height / 2 - 50,
+      scoreTier,
+      {
+        fontSize: '72px',
+        color: scoreColor,
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 8,
+      }
+    );
+    scoreText.setOrigin(0.5);
+    scoreText.setDepth(201);
 
     const statsText = this.add.text(
       width / 2,
-      height / 2 - 20,
-      `Powder: ${this.powder}\nNext Round: ${this.currentRound + 1} Fireworks`,
+      height / 2 + 20,
+      `Accuracy: ${accuracy.toFixed(0)}%\nHits: ${this.hitsInSequence}/${totalTargets}\nPowder: ${this.powder}`,
       {
         fontSize: '24px',
         color: '#ffffff',
@@ -745,40 +962,50 @@ export class SlingshotScene extends Phaser.Scene {
     statsText.setDepth(201);
     statsText.setLineSpacing(8);
 
-    const continueButton = createButton(
+    const actionButton = createButton(
       this,
-      width / 2 - 130,
-      height / 2 + 100,
-      'CONTINUE',
+      width / 2,
+      height / 2 + 120,
+      buttonText,
       () => {
         overlay.destroy();
-        roundCompleteText.destroy();
+        sequenceCompleteText.destroy();
+        scoreText.destroy();
         statsText.destroy();
-        continueButton.destroy();
+        actionButton.destroy();
         menuButton.destroy();
-        this.nextRound();
+        
+        if (buttonText === 'TRY AGAIN') {
+          // Restart same sequence with countdown
+          this.sequenceActive = false;
+          this.scene.resume();
+          this.startCountdown();
+        } else {
+          // Move to next sequence
+          this.nextRound();
+        }
       },
       200,
       60
     );
-    continueButton.setDepth(201);
+    actionButton.setDepth(201);
 
     const menuButton = createButton(
       this,
-      width / 2 + 130,
-      height / 2 + 100,
+      width / 2,
+      height / 2 + 190,
       'MENU',
       () => {
         this.scene.stop();
         this.scene.start(SCENES.MAIN_MENU);
       },
-      200,
-      60
+      150,
+      50
     );
     menuButton.setDepth(201);
 
     this.tweens.add({
-      targets: roundCompleteText,
+      targets: scoreText,
       scale: { from: 1, to: 1.1 },
       duration: 1000,
       yoyo: true,
@@ -796,6 +1023,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.targets = [];
     this.prepareNextShot();
 
+    // Start next sequence immediately (no countdown after first)
     this.startRound();
   }
 
