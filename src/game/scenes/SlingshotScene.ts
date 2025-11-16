@@ -3,6 +3,10 @@ import { SCENES } from '@/config/gameConfig';
 import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS, TARGET_COLORS, POWDER_REWARDS } from '@/utils/constants';
 import { createButton, createTextStyle } from '@/utils/helpers';
 
+const JOYPAD_BASE_RADIUS = 82;
+const JOYPAD_KNOB_RADIUS = 26;
+const MISS_EDGE_PADDING = 50;
+
 interface TargetData {
   sprite: Phaser.Physics.Arcade.Sprite;
   graphic: Phaser.GameObjects.Arc;
@@ -68,9 +72,88 @@ export class SlingshotScene extends Phaser.Scene {
   private hitsInSequence: number = 0;
   private missesInSequence: number = 0;
   private sequenceTimer: Phaser.Time.TimerEvent | null = null;
+  private activePointer?: Phaser.Input.Pointer;
+  private pointerOffsetX: number = 0;
+  private pointerOffsetY: number = 0;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
+  }
+
+  init(): void {
+    this.resetState();
+  }
+
+  private resetState(): void {
+    if (this.sequenceTimer) {
+      this.sequenceTimer.remove();
+      this.sequenceTimer = null;
+    }
+
+    if (this.time) {
+      this.time.removeAllEvents();
+    }
+
+    if (this.tweens) {
+      this.tweens.killAll();
+    }
+
+    if (this.currentProjectile) {
+      try {
+        const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+        if (body) {
+          body.stop();
+          body.setVelocity(0, 0);
+          body.setAllowGravity(false);
+          body.enable = false;
+        }
+      } catch (_error) {
+        // Ignore cleanup errors during scene reset
+      }
+      this.currentProjectile.sprite.destroy();
+      this.currentProjectile.ring.destroy();
+      this.currentProjectile = undefined;
+    }
+
+    if (this.joypad) {
+      this.destroyJoypad();
+    }
+
+    if (this.targets.length > 0) {
+      const existingTargets = [...this.targets];
+      existingTargets.forEach((target) => {
+        target.sprite.destroy();
+        target.graphic.destroy();
+        target.ring.destroy();
+      });
+      this.targets = [];
+    }
+
+    this.resetDragState();
+
+    this.projectileIdleTimer = 0;
+    this.snappedVelocity = undefined;
+
+    this.roundComplete = false;
+    this.gameOver = false;
+    this.firstSequenceStarted = false;
+    this.sequenceActive = false;
+    this.countdownActive = false;
+
+    this.hitsInSequence = 0;
+    this.missesInSequence = 0;
+
+    this.currentRound = 1;
+    this.targetsInRound = 1;
+    this.targetsRemainingInRound = 0;
+    this.targetsSpawnedInRound = 0;
+    this.powder = GAME_SETTINGS.INITIAL_POWDER;
+    this.totalPowderEarned = 0;
+    this.bestHit = 0;
+
+    if (this.input) {
+      this.input.removeAllListeners();
+    }
   }
 
   create(): void {
@@ -458,47 +541,118 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private setupInput(): void {
-    this.input.on('pointerdown', (_pointer: Phaser.Input.Pointer) => {
-      if (this.isDragging || this.currentProjectile || this.gameOver || this.roundComplete || this.countdownActive || !this.sequenceActive) return;
+    this.input.removeAllListeners();
 
-      this.isDragging = true;
-      const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
-      // Auto-drag from center: always position joypad at screen center for consistency
-      const centerX = this.scale.width / 2;
-      this.createJoypad(centerX, groundY);
-      this.createProjectile(centerX, groundY);
-    });
+    this.input.on('pointerdown', this.onPointerDown, this);
+    this.input.on('pointermove', this.onPointerMove, this);
+    this.input.on('pointerup', this.onPointerUp, this);
+    this.input.on('pointerupoutside', this.onPointerUp, this);
+  }
 
-    this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-      if (!this.isDragging || !this.joypad || !this.currentProjectile) return;
+  private onPointerDown(pointer: Phaser.Input.Pointer): void {
+    if (this.gameOver || this.roundComplete) {
+      return;
+    }
 
-      this.updateJoypad(pointer.x, pointer.y);
-    });
+    if (this.isDragging || this.currentProjectile) {
+      return;
+    }
 
-    const releaseProjectile = (_pointer: Phaser.Input.Pointer) => {
-      if (!this.isDragging || !this.joypad || !this.currentProjectile) return;
+    const canPrepareShot = this.sequenceActive || this.countdownActive;
+    if (!canPrepareShot) {
+      return;
+    }
 
-      const launched = this.launchProjectile();
+    if (this.powder <= 0) {
+      return;
+    }
+
+    const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
+    const baseRadius = JOYPAD_BASE_RADIUS;
+    const centerX = Phaser.Math.Clamp(pointer.x, baseRadius, this.scale.width - baseRadius);
+
+    this.isDragging = true;
+    this.activePointer = pointer;
+    this.snappedVelocity = undefined;
+
+    this.createJoypad(centerX, groundY);
+    this.createProjectile(centerX, groundY);
+
+    if (this.joypad) {
+      const pointerWithSetter = pointer as Phaser.Input.Pointer & {
+        setPosition?: (x: number, y: number) => void;
+      };
+      pointerWithSetter.setPosition?.(this.joypad.centerX, this.joypad.centerY);
+      pointer.prevPosition.set(this.joypad.centerX, this.joypad.centerY);
+
+      this.pointerOffsetX = this.joypad.centerX - pointer.x;
+      this.pointerOffsetY = this.joypad.centerY - pointer.y;
+
+      this.updateJoypad(this.joypad.centerX, this.joypad.centerY);
+    }
+  }
+
+  private onPointerMove(pointer: Phaser.Input.Pointer): void {
+    if (!this.isDragging || !this.joypad || !this.currentProjectile) {
+      return;
+    }
+
+    if (this.activePointer && pointer.id !== this.activePointer.id) {
+      return;
+    }
+
+    const adjustedX = pointer.x + this.pointerOffsetX;
+    const adjustedY = pointer.y + this.pointerOffsetY;
+
+    this.updateJoypad(adjustedX, adjustedY);
+  }
+
+  private onPointerUp(pointer: Phaser.Input.Pointer): void {
+    if (!this.isDragging) {
+      return;
+    }
+
+    if (this.activePointer && pointer.id !== this.activePointer.id) {
+      return;
+    }
+
+    const waitingForSequence = this.countdownActive && !this.sequenceActive;
+
+    if (!this.joypad || !this.currentProjectile || waitingForSequence) {
       this.destroyJoypad();
+      this.prepareNextShot();
+      this.resetDragState();
+      return;
+    }
 
-      if (!launched) {
-        this.prepareNextShot();
-      }
+    const launched = this.launchProjectile();
+    this.destroyJoypad();
 
-      this.isDragging = false;
-    };
+    if (!launched) {
+      this.prepareNextShot();
+    }
 
-    this.input.on('pointerup', releaseProjectile);
-    this.input.on('pointerupoutside', releaseProjectile);
+    this.resetDragState();
+  }
+
+  private clearDragPointerData(): void {
+    this.activePointer = undefined;
+    this.pointerOffsetX = 0;
+    this.pointerOffsetY = 0;
+  }
+
+  private resetDragState(): void {
+    this.isDragging = false;
+    this.clearDragPointerData();
   }
 
   private createJoypad(x: number, groundY: number): void {
     const container = this.add.container(0, 0);
 
-    const base = this.add.circle(x, groundY, 82, COLORS.WHITE, 0.22);
+    const base = this.add.circle(x, groundY, JOYPAD_BASE_RADIUS, COLORS.WHITE, 0.22);
     base.setStrokeStyle(3, COLORS.WHITE, 0.55);
 
-    const knob = this.add.circle(x, groundY, 26, COLORS.PRIMARY, 0.72);
+    const knob = this.add.circle(x, groundY, JOYPAD_KNOB_RADIUS, COLORS.PRIMARY, 0.72);
     knob.setStrokeStyle(3, COLORS.WHITE, 0.9);
 
     const powerLine = this.add.graphics();
@@ -693,8 +847,28 @@ export class SlingshotScene extends Phaser.Scene {
   private destroyJoypad(): void {
     if (!this.joypad) return;
 
-    this.joypad.container.destroy();
+    const { container, powerLine, trajectoryLine } = this.joypad;
+
+    if (powerLine.scene) {
+      powerLine.clear();
+    }
+
+    if (trajectoryLine.scene) {
+      trajectoryLine.clear();
+    }
+
+    try {
+      if (container.scene) {
+        container.destroy(true);
+      } else {
+        container.destroy();
+      }
+    } catch (_error) {
+      // Ignore cleanup errors when tearing down joypad
+    }
+
     this.joypad = undefined;
+    this.clearDragPointerData();
   }
 
   private launchProjectile(): boolean {
@@ -754,19 +928,37 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private handleOffscreenProjectile(): void {
-    // Create miss feedback at edge of screen
+    if (!this.currentProjectile) {
+      return;
+    }
+
+    const projectile = this.currentProjectile;
+
+    if (projectile.fadingOut) {
+      return;
+    }
+
+    projectile.fadingOut = true;
+
+    const sprite = projectile.sprite;
+
     let missX = this.scale.width / 2;
     let missY = this.scale.height / 2;
-    
-    if (this.currentProjectile) {
-      const sprite = this.currentProjectile.sprite;
-      if (sprite.x < 0) missX = 50;
-      else if (sprite.x > this.scale.width) missX = this.scale.width - 50;
-      else missX = sprite.x;
-      
-      if (sprite.y < 0) missY = 50;
-      else if (sprite.y > this.scale.height) missY = this.scale.height - 50;
-      else missY = sprite.y;
+
+    if (sprite.x < 0) {
+      missX = MISS_EDGE_PADDING;
+    } else if (sprite.x > this.scale.width) {
+      missX = this.scale.width - MISS_EDGE_PADDING;
+    } else {
+      missX = sprite.x;
+    }
+
+    if (sprite.y < 0) {
+      missY = MISS_EDGE_PADDING;
+    } else if (sprite.y > this.scale.height) {
+      missY = this.scale.height - MISS_EDGE_PADDING;
+    } else {
+      missY = sprite.y;
     }
 
     const missText = this.add.text(missX, missY, 'MISS', {
@@ -788,8 +980,38 @@ export class SlingshotScene extends Phaser.Scene {
       onComplete: () => missText.destroy(),
     });
 
-    this.prepareNextShot();
+    this.missesInSequence++;
+
+    try {
+      const body = sprite.body as Phaser.Physics.Arcade.Body | undefined;
+      if (body) {
+        body.stop();
+        body.setVelocity(0, 0);
+        body.setAllowGravity(false);
+        body.enable = false;
+      }
+    } catch (_error) {
+      // Ignore cleanup errors when disabling offscreen projectile
+    }
+
+    sprite.setVisible(false);
+    projectile.ring.setVisible(false);
+
+    try {
+      this.prepareNextShot();
+    } catch (_error) {
+      // Ignore cleanup errors when resetting after offscreen miss
+    }
+
     this.destroyJoypad();
+    this.resetDragState();
+
+    this.time.delayedCall(500, () => {
+      if (this.currentProjectile === projectile) {
+        this.prepareNextShot();
+        this.destroyJoypad();
+      }
+    });
   }
 
   private handleTargetHit(targetData: TargetData): void {
@@ -941,12 +1163,26 @@ export class SlingshotScene extends Phaser.Scene {
 
   private prepareNextShot(): void {
     if (this.currentProjectile) {
-      this.currentProjectile.sprite.destroy();
-      this.currentProjectile.ring.destroy();
+      const projectile = this.currentProjectile;
+      try {
+        const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+        if (body) {
+          body.stop();
+          body.setVelocity(0, 0);
+          body.setAllowGravity(false);
+          body.enable = false;
+        }
+      } catch (_error) {
+        // Ignore cleanup errors during projectile teardown
+      }
+
+      projectile.sprite.destroy();
+      projectile.ring.destroy();
       this.currentProjectile = undefined;
     }
 
     this.projectileIdleTimer = 0;
+    this.snappedVelocity = undefined;
   }
 
   private createUI(): void {
