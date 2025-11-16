@@ -28,9 +28,18 @@ export const UI_STYLES = {
 } as const;
 
 export const GAME_SETTINGS = {
-  INITIAL_PROJECTILES: 15,
+  INITIAL_POWDER: 10,
   GROUND_HEIGHT: 100,
-  STAGE_PROJECTILES_MULTIPLIER: 3,
+  POWDER_COST_PER_SHOT: 1,
+  TARGET_SPAWN_DELAY: 2000,
+  PROJECTILE_IDLE_TIME: 800,
+} as const;
+
+export const POWDER_REWARDS = {
+  RED: 1,
+  ORANGE: 2,
+  GREEN: 3,
+  PURPLE: 4,
 } as const;
 
 export const TARGET_COLORS = {

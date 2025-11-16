@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { SCENES } from '@/config/gameConfig';
-import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS, TARGET_COLORS } from '@/utils/constants';
+import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS, TARGET_COLORS, POWDER_REWARDS } from '@/utils/constants';
 import { createButton, createTextStyle } from '@/utils/helpers';
 
 interface TargetData {
@@ -12,6 +12,8 @@ interface TargetData {
   hit: boolean;
   missTriggered: boolean;
   ring: Phaser.GameObjects.Arc;
+  fixedX: number;
+  fixedY: number;
 }
 
 interface JoypadUI {
@@ -31,19 +33,22 @@ interface ProjectileData {
   sprite: Phaser.Physics.Arcade.Sprite;
   ring: Phaser.GameObjects.Arc;
   targetColor: number;
+  fadingOut: boolean;
 }
 
 export class SlingshotScene extends Phaser.Scene {
-  private currentStage: number = 1;
-  private targetsInStage: number = 1;
-  private targetsRemainingInStage: number = 1;
-  private projectileCount: number = GAME_SETTINGS.INITIAL_PROJECTILES;
-  private totalScore: number = 0;
+  private currentRound: number = 1;
+  private targetsInRound: number = 1;
+  private targetsRemainingInRound: number = 0;
+  private targetsSpawnedInRound: number = 0;
+  private powder: number = GAME_SETTINGS.INITIAL_POWDER;
+  private totalPowderEarned: number = 0;
+  private bestHit: number = 0;
 
-  private stageText!: Phaser.GameObjects.Text;
-  private scoreText!: Phaser.GameObjects.Text;
+  private roundText!: Phaser.GameObjects.Text;
+  private powderText!: Phaser.GameObjects.Text;
   private instructionsText!: Phaser.GameObjects.Text;
-  private projectileCountText!: Phaser.GameObjects.Text;
+  private sequenceProgressText!: Phaser.GameObjects.Text;
 
   private isDragging: boolean = false;
   private currentProjectile?: ProjectileData;
@@ -53,9 +58,9 @@ export class SlingshotScene extends Phaser.Scene {
 
   private joypad?: JoypadUI;
   private projectileIdleTimer: number = 0;
-  private readonly projectileIdleThreshold: number = 1500;
 
-  private gameWon: boolean = false;
+  private roundComplete: boolean = false;
+  private gameOver: boolean = false;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -76,7 +81,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.createUI();
     this.setupInput();
-    this.spawnTargetsForStage();
+    this.startRound();
   }
 
   update(_time: number, delta: number): void {
@@ -97,42 +102,51 @@ export class SlingshotScene extends Phaser.Scene {
         Math.abs(body.velocity.x) < 1 &&
         Math.abs(body.velocity.y) < 1;
 
-      if (isOffscreen) {
+      const isOnGround = sprite.y > this.scale.height - GAME_SETTINGS.GROUND_HEIGHT - 30;
+
+      if (isOffscreen && !this.currentProjectile.fadingOut) {
         this.prepareNextShot();
-      } else if (
-        hasLowVelocity &&
-        sprite.y > this.scale.height - GAME_SETTINGS.GROUND_HEIGHT - 30
-      ) {
+      } else if (hasLowVelocity && isOnGround && !this.currentProjectile.fadingOut) {
         this.projectileIdleTimer += delta;
 
-        if (this.projectileIdleTimer >= this.projectileIdleThreshold) {
-          this.prepareNextShot();
+        if (this.projectileIdleTimer >= GAME_SETTINGS.PROJECTILE_IDLE_TIME) {
+          this.fadeOutProjectile();
         }
       } else {
         this.projectileIdleTimer = 0;
       }
 
-      if (ring) {
+      if (ring && !this.currentProjectile.fadingOut) {
         ring.setPosition(sprite.x, sprite.y);
       }
     }
 
-    if (this.targetsRemainingInStage === 0 && !this.gameWon) {
-      this.handleStageWin();
-    } else if (this.projectileCount === 0 && !this.currentProjectile) {
-      this.handleGameOver();
+    if (this.targetsRemainingInRound === 0 && 
+        this.targetsSpawnedInRound === this.targetsInRound && 
+        !this.roundComplete && 
+        !this.gameOver) {
+      this.handleRoundComplete();
     }
   }
 
-  private spawnTargetsForStage(): void {
-    this.targetsRemainingInStage = this.targetsInStage;
-    this.updateStageText();
+  private startRound(): void {
+    this.targetsInRound = this.currentRound;
+    this.targetsRemainingInRound = this.targetsInRound;
+    this.targetsSpawnedInRound = 0;
+    this.roundComplete = false;
+    this.updateRoundText();
+    this.updateSequenceProgressText();
+    this.spawnNextTargetInSequence();
+  }
 
-    for (let i = 0; i < this.targetsInStage; i++) {
-      this.time.delayedCall(i * 1500, () => {
-        this.spawnTarget();
-      });
+  private spawnNextTargetInSequence(): void {
+    if (this.targetsSpawnedInRound >= this.targetsInRound) {
+      return;
     }
+
+    this.spawnTarget();
+    this.targetsSpawnedInRound++;
+    this.updateSequenceProgressText();
   }
 
   private spawnTarget(): void {
@@ -140,34 +154,28 @@ export class SlingshotScene extends Phaser.Scene {
     const height = this.scale.height;
     const groundY = height - GAME_SETTINGS.GROUND_HEIGHT;
 
-    const spawnX = Phaser.Math.Between(250, width - 250);
-    const initialRadius = 54;
-    const lifetime = 6500;
+    const fixedX = Phaser.Math.Between(200, width - 200);
+    const fixedY = Phaser.Math.Between(groundY * 0.2, groundY * 0.6);
 
-    const sprite = this.physics.add.sprite(spawnX, groundY, '');
+    const initialRadius = 60;
+    const lifetime = 5000;
+
+    const sprite = this.physics.add.sprite(fixedX, fixedY, '');
     sprite.setDisplaySize(0, 0);
     sprite.setVisible(false);
 
     const body = sprite.body as Phaser.Physics.Arcade.Body;
     body.setCircle(initialRadius);
-    body.setAllowGravity(true);
-    body.setBounce(0);
-    body.setDamping(false);
+    body.setAllowGravity(false);
+    body.setImmovable(true);
 
-    const peakHeightPercent = 0.75;
-    const peakHeight = height * peakHeightPercent;
-    const verticalDistance = groundY - peakHeight;
-    const timeToReachPeak = lifetime * 0.35;
-    const initialVelocityY = -(verticalDistance / timeToReachPeak);
-
-    body.setVelocity(Phaser.Math.Between(-30, 30), initialVelocityY);
-    body.setGravityY(-100);
-
-    const graphic = this.add.circle(spawnX, groundY, initialRadius, TARGET_COLORS.RED);
+    const graphic = this.add.circle(fixedX, fixedY, initialRadius, TARGET_COLORS.RED);
     graphic.setStrokeStyle(3, COLORS.WHITE, 0.8);
+    graphic.setDepth(10);
 
-    const ring = this.add.circle(spawnX, groundY, initialRadius + 8, 0x00000000);
-    ring.setStrokeStyle(2, TARGET_COLORS.RED, 0.6);
+    const ring = this.add.circle(fixedX, fixedY, initialRadius + 8, 0x00000000);
+    ring.setStrokeStyle(3, TARGET_COLORS.RED, 0.7);
+    ring.setDepth(9);
 
     const targetData: TargetData = {
       sprite,
@@ -178,6 +186,8 @@ export class SlingshotScene extends Phaser.Scene {
       initialRadius,
       hit: false,
       missTriggered: false,
+      fixedX,
+      fixedY,
     };
 
     this.targets.push(targetData);
@@ -199,15 +209,16 @@ export class SlingshotScene extends Phaser.Scene {
       const progress = Math.min(elapsed / targetData.lifetime, 1);
       const timeRemaining = 1 - progress;
 
-      const currentRadius = Math.max(targetData.initialRadius * timeRemaining, 12);
+      const currentRadius = Math.max(targetData.initialRadius * timeRemaining, 10);
       targetData.graphic.setRadius(currentRadius);
       targetData.ring.setRadius(currentRadius + 8);
 
       const body = targetData.sprite.body as Phaser.Physics.Arcade.Body;
       body.setCircle(currentRadius);
 
-      targetData.graphic.setPosition(targetData.sprite.x, targetData.sprite.y);
-      targetData.ring.setPosition(targetData.sprite.x, targetData.sprite.y);
+      targetData.graphic.setPosition(targetData.fixedX, targetData.fixedY);
+      targetData.ring.setPosition(targetData.fixedX, targetData.fixedY);
+      targetData.sprite.setPosition(targetData.fixedX, targetData.fixedY);
 
       let color: number;
       const colorPhase = timeRemaining;
@@ -220,29 +231,24 @@ export class SlingshotScene extends Phaser.Scene {
         color = TARGET_COLORS.GREEN;
       } else {
         color = TARGET_COLORS.PURPLE;
-
-        if (!targetData.missTriggered) {
-          targetData.missTriggered = true;
-          this.handleTargetMiss(targetData);
-        }
       }
 
       targetData.graphic.setFillStyle(color, 1);
-      targetData.ring.setStrokeStyle(2, color, 0.6);
+      targetData.ring.setStrokeStyle(3, color, 0.7);
 
-      const alpha = Phaser.Math.Clamp(timeRemaining * 1.2, 0, 1);
+      if (this.currentProjectile && !this.currentProjectile.fadingOut) {
+        this.currentProjectile.targetColor = color;
+        this.currentProjectile.ring.setStrokeStyle(3, color, 0.7);
+      }
+
+      const alpha = Phaser.Math.Clamp(timeRemaining * 1.5, 0, 1);
       targetData.graphic.setAlpha(alpha);
-      targetData.ring.setAlpha(alpha);
+      targetData.ring.setAlpha(alpha * 0.8);
 
-      const fadeStartThreshold = 0.15;
-      if (progress >= 1 - fadeStartThreshold) {
-        const fadeProgress = (progress - (1 - fadeStartThreshold)) / fadeStartThreshold;
-        const fadeAlpha = 1 - fadeProgress;
-        targetData.graphic.setAlpha(fadeAlpha);
-        targetData.ring.setAlpha(fadeAlpha);
-
-        if (progress >= 1) {
-          this.removeTarget(targetData);
+      if (progress >= 1) {
+        if (!targetData.missTriggered) {
+          targetData.missTriggered = true;
+          this.handleTargetMiss(targetData);
         }
       }
     });
@@ -251,35 +257,38 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private handleTargetMiss(targetData: TargetData): void {
-    const x = targetData.sprite.x;
-    const y = targetData.sprite.y;
+    const x = targetData.fixedX;
+    const y = targetData.fixedY;
 
     const missText = this.add.text(x, y, 'MISS', {
-      fontSize: '28px',
-      color: '#9b59b6',
+      fontSize: '32px',
+      color: '#e74c3c',
       fontStyle: 'bold',
       stroke: '#000000',
-      strokeThickness: 4,
+      strokeThickness: 5,
     });
     missText.setOrigin(0.5);
     missText.setDepth(100);
 
     this.tweens.add({
       targets: missText,
-      y: y - 50,
+      y: y - 60,
       alpha: 0,
-      duration: 750,
+      duration: 800,
       ease: 'Cubic.easeOut',
       onComplete: () => missText.destroy(),
     });
 
-    if (this.currentProjectile && !this.isDragging) {
-      this.prepareNextShot();
-    }
+    this.removeTarget(targetData);
+    this.targetsRemainingInRound--;
+
+    this.time.delayedCall(1000, () => {
+      this.spawnNextTargetInSequence();
+    });
   }
 
   private createProjectile(x: number, y: number): void {
-    if (this.projectileCount <= 0) {
+    if (this.powder <= 0) {
       return;
     }
 
@@ -304,20 +313,21 @@ export class SlingshotScene extends Phaser.Scene {
 
     sprite.setDepth(60);
 
-    const ring = this.add.circle(x, y, 23, 0x00000000);
-    ring.setStrokeStyle(2, TARGET_COLORS.RED, 0.6);
+    const ring = this.add.circle(x, y, 25, 0x00000000);
+    ring.setStrokeStyle(3, TARGET_COLORS.RED, 0.7);
     ring.setDepth(59);
 
     this.currentProjectile = {
       sprite,
       ring,
       targetColor: TARGET_COLORS.RED,
+      fadingOut: false,
     };
   }
 
   private setupInput(): void {
     this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-      if (this.isDragging || this.currentProjectile) return;
+      if (this.isDragging || this.currentProjectile || this.gameOver) return;
 
       this.isDragging = true;
       const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
@@ -334,9 +344,10 @@ export class SlingshotScene extends Phaser.Scene {
     const releaseProjectile = (_pointer: Phaser.Input.Pointer) => {
       if (!this.isDragging || !this.joypad || !this.currentProjectile) return;
 
-      if (this.launchProjectile()) {
-        this.destroyJoypad();
-      } else {
+      const launched = this.launchProjectile();
+      this.destroyJoypad();
+
+      if (!launched) {
         this.prepareNextShot();
       }
 
@@ -361,16 +372,6 @@ export class SlingshotScene extends Phaser.Scene {
 
     container.add([base, powerLine, trajectoryLine, knob]);
     container.setDepth(55);
-    container.setAlpha(0);
-    container.setScale(0.85);
-
-    this.tweens.add({
-      targets: container,
-      alpha: 1,
-      scale: 1,
-      duration: 120,
-      ease: 'Cubic.easeOut',
-    });
 
     this.joypad = {
       container,
@@ -387,6 +388,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     if (this.currentProjectile) {
       this.currentProjectile.sprite.setPosition(x, groundY);
+      this.currentProjectile.ring.setPosition(x, groundY);
     }
   }
 
@@ -409,6 +411,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.joypad.offsetY = offsetY;
 
     this.currentProjectile.sprite.setPosition(this.joypad.centerX, this.joypad.groundY);
+    this.currentProjectile.ring.setPosition(this.joypad.centerX, this.joypad.groundY);
 
     this.joypad.powerLine.clear();
     this.joypad.powerLine.lineStyle(4, COLORS.PRIMARY, 0.6);
@@ -467,17 +470,7 @@ export class SlingshotScene extends Phaser.Scene {
   private destroyJoypad(): void {
     if (!this.joypad) return;
 
-    const container = this.joypad.container;
-
-    this.tweens.add({
-      targets: container,
-      alpha: 0,
-      scale: 0.8,
-      duration: 120,
-      ease: 'Cubic.easeIn',
-      onComplete: () => container.destroy(),
-    });
-
+    this.joypad.container.destroy();
     this.joypad = undefined;
   }
 
@@ -511,10 +504,19 @@ export class SlingshotScene extends Phaser.Scene {
       });
     });
 
-    this.projectileCount--;
-    this.updateProjectileCountText();
+    this.powder -= GAME_SETTINGS.POWDER_COST_PER_SHOT;
+    this.updatePowderText();
 
     this.projectileIdleTimer = 0;
+
+    if (this.powder <= 0 && !this.currentProjectile.fadingOut) {
+      this.time.delayedCall(2000, () => {
+        if (!this.gameOver) {
+          this.handleGameOver();
+        }
+      });
+    }
+
     return true;
   }
 
@@ -522,56 +524,94 @@ export class SlingshotScene extends Phaser.Scene {
     if (targetData.hit) return;
     targetData.hit = true;
 
-    this.targetsRemainingInStage--;
+    this.targetsRemainingInRound--;
+    this.updateSequenceProgressText();
 
-    const x = targetData.sprite.x;
-    const y = targetData.sprite.y;
+    const x = targetData.fixedX;
+    const y = targetData.fixedY;
     const currentColor = targetData.graphic.fillColor;
 
-    for (let i = 0; i < 12; i++) {
-      const particle = this.add.circle(x, y, 6, currentColor);
-      const angle = (Math.PI * 2 * i) / 12;
+    let powderReward: number = POWDER_REWARDS.RED;
+    let hitQuality = 'RED';
+
+    if (currentColor === TARGET_COLORS.PURPLE) {
+      powderReward = POWDER_REWARDS.PURPLE;
+      hitQuality = 'PERFECT';
+    } else if (currentColor === TARGET_COLORS.GREEN) {
+      powderReward = POWDER_REWARDS.GREEN;
+      hitQuality = 'GOOD';
+    } else if (currentColor === TARGET_COLORS.ORANGE) {
+      powderReward = POWDER_REWARDS.ORANGE;
+      hitQuality = 'OKAY';
+    } else {
+      powderReward = POWDER_REWARDS.RED;
+      hitQuality = 'HIT';
+    }
+
+    this.powder += powderReward;
+    this.totalPowderEarned += powderReward;
+    if (powderReward > this.bestHit) {
+      this.bestHit = powderReward;
+    }
+
+    const particleCount = powderReward * 5;
+    const particleSpeed = powderReward * 20;
+    const particleSize = 4 + powderReward;
+
+    for (let i = 0; i < particleCount; i++) {
+      const particle = this.add.circle(x, y, particleSize, currentColor);
+      const angle = (Math.PI * 2 * i) / particleCount;
 
       this.tweens.add({
         targets: particle,
-        x: x + Math.cos(angle) * 80,
-        y: y + Math.sin(angle) * 80,
+        x: x + Math.cos(angle) * particleSpeed,
+        y: y + Math.sin(angle) * particleSpeed,
         alpha: 0,
-        scale: 0.5,
-        duration: 600,
+        scale: 0.3,
+        duration: 400 + powderReward * 100,
         ease: 'Cubic.easeOut',
         onComplete: () => particle.destroy(),
       });
     }
 
-    const scorePopup = this.add.text(x, y, '+100', {
-      fontSize: '32px',
-      color: '#FFD700',
+    const hitText = this.add.text(x, y - 20, hitQuality, {
+      fontSize: '24px',
+      color: '#ffffff',
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 4,
     });
-    scorePopup.setOrigin(0.5);
-    scorePopup.setDepth(100);
+    hitText.setOrigin(0.5);
+    hitText.setDepth(101);
 
-    this.totalScore += 100;
+    const powderPopup = this.add.text(x, y + 10, `+${powderReward} POWDER`, {
+      fontSize: '28px',
+      color: '#FFD700',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 5,
+    });
+    powderPopup.setOrigin(0.5);
+    powderPopup.setDepth(100);
 
     this.tweens.add({
-      targets: scorePopup,
-      y: y - 60,
+      targets: [hitText, powderPopup],
+      y: `-=${70}`,
       alpha: 0,
-      duration: 800,
+      duration: 1000,
       ease: 'Cubic.easeOut',
-      onComplete: () => scorePopup.destroy(),
+      onComplete: () => {
+        hitText.destroy();
+        powderPopup.destroy();
+      },
     });
 
     this.removeTarget(targetData);
-    this.updateScoreText();
+    this.updatePowderText();
     this.prepareNextShot();
-    this.time.delayedCall(500, () => {
-      if (this.targetsRemainingInStage > 0) {
-        this.spawnTarget();
-      }
+
+    this.time.delayedCall(GAME_SETTINGS.TARGET_SPAWN_DELAY, () => {
+      this.spawnNextTargetInSequence();
     });
   }
 
@@ -580,6 +620,22 @@ export class SlingshotScene extends Phaser.Scene {
     targetData.graphic.destroy();
     targetData.ring.destroy();
     this.targets = this.targets.filter((t) => t !== targetData);
+  }
+
+  private fadeOutProjectile(): void {
+    if (!this.currentProjectile || this.currentProjectile.fadingOut) return;
+
+    this.currentProjectile.fadingOut = true;
+
+    this.tweens.add({
+      targets: [this.currentProjectile.sprite, this.currentProjectile.ring],
+      alpha: 0,
+      duration: 500,
+      ease: 'Linear',
+      onComplete: () => {
+        this.prepareNextShot();
+      },
+    });
   }
 
   private prepareNextShot(): void {
@@ -596,58 +652,58 @@ export class SlingshotScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
 
-    this.stageText = this.add.text(
+    this.roundText = this.add.text(
       width / 2,
       20,
-      `Stage: ${this.currentStage}`,
-      createTextStyle('24px', '#ffffff')
+      `Round ${this.currentRound}`,
+      createTextStyle('32px', '#ffffff')
     );
-    this.stageText.setOrigin(0.5, 0);
+    this.roundText.setOrigin(0.5, 0);
+    this.roundText.setDepth(100);
 
-    this.scoreText = this.add.text(
+    this.powderText = this.add.text(
       20,
-      60,
-      `Targets: ${this.targetsRemainingInStage}`,
-      createTextStyle('24px', '#ffffff')
+      20,
+      `POWDER: ${this.powder}`,
+      createTextStyle('28px', '#FFD700')
     );
-    this.scoreText.setOrigin(0);
+    this.powderText.setOrigin(0, 0);
+    this.powderText.setDepth(100);
 
-    this.projectileCountText = this.add.text(
+    this.sequenceProgressText = this.add.text(
       width - 20,
-      60,
-      `Projectiles: ${this.projectileCount}`,
+      20,
+      `Targets: 0/${this.targetsInRound}`,
       createTextStyle('24px', '#ffffff')
     );
-    this.projectileCountText.setOrigin(1, 0);
+    this.sequenceProgressText.setOrigin(1, 0);
+    this.sequenceProgressText.setDepth(100);
 
     this.instructionsText = this.add.text(
       width / 2,
-      height - 40,
-      'Tap anywhere, drag to aim, release to launch',
-      createTextStyle('20px', '#ffffff')
+      height - 30,
+      'Tap to shoot • Hit targets while colored for powder rewards!',
+      createTextStyle('18px', '#ffffff')
     );
     this.instructionsText.setOrigin(0.5, 1);
-
-    this.stageText.setDepth(100);
-    this.scoreText.setDepth(100);
-    this.projectileCountText.setDepth(100);
     this.instructionsText.setDepth(100);
   }
 
-  private updateScoreText(): void {
-    this.scoreText.setText(`Targets: ${this.targetsRemainingInStage}`);
+  private updatePowderText(): void {
+    this.powderText.setText(`POWDER: ${this.powder}`);
   }
 
-  private updateStageText(): void {
-    this.stageText.setText(`Stage: ${this.currentStage}`);
+  private updateRoundText(): void {
+    this.roundText.setText(`Round ${this.currentRound}`);
   }
 
-  private updateProjectileCountText(): void {
-    this.projectileCountText.setText(`Projectiles: ${this.projectileCount}`);
+  private updateSequenceProgressText(): void {
+    const completed = this.targetsInRound - this.targetsRemainingInRound;
+    this.sequenceProgressText.setText(`Targets: ${completed}/${this.targetsInRound}`);
   }
 
-  private handleStageWin(): void {
-    this.gameWon = true;
+  private handleRoundComplete(): void {
+    this.roundComplete = true;
     this.scene.pause();
 
     const width = this.scale.width;
@@ -656,23 +712,28 @@ export class SlingshotScene extends Phaser.Scene {
     const overlay = this.add.rectangle(width / 2, height / 2, width, height, COLORS.BLACK, 0.7);
     overlay.setDepth(200);
 
-    const stageWinText = this.add.text(width / 2, height / 2 - 80, `STAGE ${this.currentStage} COMPLETE!`, {
-      fontSize: '64px',
-      color: '#00FF00',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 6,
-    });
-    stageWinText.setOrigin(0.5);
-    stageWinText.setDepth(201);
-
-    const nextStageText = this.add.text(
+    const roundCompleteText = this.add.text(
       width / 2,
-      height / 2,
-      `Next Stage: ${this.currentStage + 1} targets`,
+      height / 2 - 100,
+      `ROUND ${this.currentRound} COMPLETE!`,
       {
-        fontSize: '28px',
+        fontSize: '56px',
+        color: '#00FF00',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 6,
+      }
+    );
+    roundCompleteText.setOrigin(0.5);
+    roundCompleteText.setDepth(201);
+
+    const statsText = this.add.text(
+      width / 2,
+      height / 2 - 20,
+      `Powder: ${this.powder}\nNext Round: ${this.currentRound + 1} Fireworks`,
+      {
+        fontSize: '24px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
         align: 'center',
@@ -680,8 +741,9 @@ export class SlingshotScene extends Phaser.Scene {
         strokeThickness: 4,
       }
     );
-    nextStageText.setOrigin(0.5);
-    nextStageText.setDepth(201);
+    statsText.setOrigin(0.5);
+    statsText.setDepth(201);
+    statsText.setLineSpacing(8);
 
     const continueButton = createButton(
       this,
@@ -689,7 +751,12 @@ export class SlingshotScene extends Phaser.Scene {
       height / 2 + 100,
       'CONTINUE',
       () => {
-        this.nextStage();
+        overlay.destroy();
+        roundCompleteText.destroy();
+        statsText.destroy();
+        continueButton.destroy();
+        menuButton.destroy();
+        this.nextRound();
       },
       200,
       60
@@ -702,6 +769,7 @@ export class SlingshotScene extends Phaser.Scene {
       height / 2 + 100,
       'MENU',
       () => {
+        this.scene.stop();
         this.scene.start(SCENES.MAIN_MENU);
       },
       200,
@@ -710,7 +778,7 @@ export class SlingshotScene extends Phaser.Scene {
     menuButton.setDepth(201);
 
     this.tweens.add({
-      targets: stageWinText,
+      targets: roundCompleteText,
       scale: { from: 1, to: 1.1 },
       duration: 1000,
       yoyo: true,
@@ -719,46 +787,46 @@ export class SlingshotScene extends Phaser.Scene {
     });
   }
 
-  private nextStage(): void {
-    this.currentStage++;
-    this.targetsInStage = this.currentStage;
-
-    this.gameWon = false;
+  private nextRound(): void {
+    this.currentRound++;
+    this.roundComplete = false;
     this.scene.resume();
 
     this.targets.forEach((target) => this.removeTarget(target));
     this.targets = [];
     this.prepareNextShot();
 
-    this.spawnTargetsForStage();
+    this.startRound();
   }
 
   private handleGameOver(): void {
+    if (this.gameOver) return;
+    this.gameOver = true;
     this.scene.pause();
 
     const width = this.scale.width;
     const height = this.scale.height;
 
-    const overlay = this.add.rectangle(width / 2, height / 2, width, height, COLORS.BLACK, 0.7);
+    const overlay = this.add.rectangle(width / 2, height / 2, width, height, COLORS.BLACK, 0.75);
     overlay.setDepth(200);
 
-    const gameOverText = this.add.text(width / 2, height / 2 - 80, 'GAME OVER', {
-      fontSize: '64px',
-      color: `#${COLORS.DANGER.toString(16).padStart(6, '0')}`,
+    const gameOverText = this.add.text(width / 2, height / 2 - 120, 'GAME OVER', {
+      fontSize: '72px',
+      color: '#e74c3c',
       fontFamily: 'Arial, sans-serif',
       fontStyle: 'bold',
       stroke: '#000000',
-      strokeThickness: 6,
+      strokeThickness: 8,
     });
     gameOverText.setOrigin(0.5);
     gameOverText.setDepth(201);
 
     const statsText = this.add.text(
       width / 2,
-      height / 2,
-      `Stages Completed: ${this.currentStage - 1}\nTotal Score: ${this.totalScore}`,
+      height / 2 - 20,
+      `Rounds Completed: ${this.currentRound - 1}\nTotal Powder Earned: ${this.totalPowderEarned}\nBest Hit: +${this.bestHit} Powder`,
       {
-        fontSize: '24px',
+        fontSize: '26px',
         color: '#ffffff',
         fontFamily: 'Arial, sans-serif',
         align: 'center',
@@ -768,15 +836,16 @@ export class SlingshotScene extends Phaser.Scene {
     );
     statsText.setOrigin(0.5);
     statsText.setDepth(201);
-    statsText.setLineSpacing(10);
+    statsText.setLineSpacing(12);
 
     const restartButton = createButton(
       this,
       width / 2 - 130,
-      height / 2 + 100,
+      height / 2 + 120,
       'RESTART',
       () => {
-        this.scene.restart();
+        this.scene.stop();
+        this.scene.start(SCENES.SLINGSHOT);
       },
       200,
       60
@@ -786,9 +855,10 @@ export class SlingshotScene extends Phaser.Scene {
     const menuButton = createButton(
       this,
       width / 2 + 130,
-      height / 2 + 100,
+      height / 2 + 120,
       'MENU',
       () => {
+        this.scene.stop();
         this.scene.start(SCENES.MAIN_MENU);
       },
       200,
@@ -798,8 +868,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.tweens.add({
       targets: gameOverText,
-      scale: { from: 1, to: 1.1 },
-      duration: 1000,
+      scale: { from: 1, to: 1.05 },
+      duration: 1200,
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
