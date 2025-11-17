@@ -53,7 +53,9 @@ export class SlingshotScene extends Phaser.Scene {
   private bestHit: number = 0;
 
   private roundText!: Phaser.GameObjects.Text;
-  private powderText!: Phaser.GameObjects.Text;
+  private powderLabel!: Phaser.GameObjects.Text;
+  private powderValue!: Phaser.GameObjects.Text;
+  private powderText!: Phaser.GameObjects.Text; // Keep for backward compatibility
   private instructionsText!: Phaser.GameObjects.Text;
   private sequenceProgressText!: Phaser.GameObjects.Text;
   private streakCounterText!: Phaser.GameObjects.Text;
@@ -93,6 +95,10 @@ export class SlingshotScene extends Phaser.Scene {
   private powderAnimationTween?: Phaser.Tweens.Tween;
   private powderCounterX: number = 20;
   private powderCounterY: number = 20;
+  
+  // Bonus mode visual tracking
+  private bonusModeAnimation?: Phaser.Time.TimerEvent;
+  private bonusModeVisualActive: boolean = false;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -116,6 +122,13 @@ export class SlingshotScene extends Phaser.Scene {
     if (this.tweens) {
       this.tweens.killAll();
     }
+
+    // Clean up bonus mode animations
+    if (this.bonusModeAnimation) {
+      this.bonusModeAnimation.remove();
+      this.bonusModeAnimation = undefined;
+    }
+    this.bonusModeVisualActive = false;
 
     if (this.currentProjectile) {
       try {
@@ -492,6 +505,10 @@ export class SlingshotScene extends Phaser.Scene {
     this.bonusStageActive = false;
     this.consecutiveHits = 0;
     this.streakMultiplier = 1;
+    
+    // Reset bonus mode visual
+    this.deactivateBonusModeVisual();
+    
     console.log('[SEQUENCE] Streak counters reset for new sequence');
 
     // Update UI displays for reset streaks
@@ -1672,6 +1689,7 @@ export class SlingshotScene extends Phaser.Scene {
       // Activate bonus after 3 perfects
       if (this.consecutivePerfects === 3) {
         this.bonusStageActive = true;
+        this.activateBonusModeVisual();
         this.showStatusIndicator('BONUS STAGE ACTIVATED!', '#00ff00', 'BONUS STAGE');
       }
       
@@ -1684,6 +1702,7 @@ export class SlingshotScene extends Phaser.Scene {
     } else {
       // Non-perfect hit - exit bonus
       if (this.bonusStageActive) {
+        this.deactivateBonusModeVisual();
         this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
       }
       this.bonusStageActive = false;
@@ -1716,6 +1735,7 @@ export class SlingshotScene extends Phaser.Scene {
     
     // Exit bonus stage
     if (this.bonusStageActive) {
+      this.deactivateBonusModeVisual();
       this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
     }
     this.bonusStageActive = false;
@@ -2177,6 +2197,36 @@ export class SlingshotScene extends Phaser.Scene {
     this.roundText.setOrigin(0.5, 0);
     this.roundText.setDepth(100);
 
+    // Split powder counter into separate label and value
+    this.powderLabel = this.add.text(
+      20,
+      20,
+      'POWDER:',
+      {
+        fontSize: '24px',
+        color: '#ffffff',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 2
+      }
+    ).setOrigin(0, 0);
+    this.powderLabel.setDepth(100);
+
+    this.powderValue = this.add.text(
+      100,
+      20,
+      this.powder.toString(),
+      {
+        fontSize: '28px',
+        color: '#FFD700',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 2
+      }
+    ).setOrigin(0, 0);
+    this.powderValue.setDepth(100);
+
+    // Keep original powderText for backward compatibility with existing animation methods
     this.powderText = this.add.text(
       20,
       20,
@@ -2184,7 +2234,8 @@ export class SlingshotScene extends Phaser.Scene {
       createTextStyle('28px', '#FFD700')
     );
     this.powderText.setOrigin(0, 0);
-    this.powderText.setDepth(100);
+    this.powderText.setDepth(90); // Behind the new elements
+    this.powderText.setVisible(false); // Hide the original
 
     this.sequenceProgressText = this.add.text(
       width - 20,
@@ -2226,6 +2277,10 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private updatePowderText(): void {
+    // Update the new separated value element
+    this.powderValue.setText(this.powder.toString());
+    
+    // Also update the hidden original for backward compatibility
     this.powderText.setText(`POWDER: ${this.powder}`);
   }
 
@@ -2243,7 +2298,10 @@ export class SlingshotScene extends Phaser.Scene {
       duration: 500,
       ease: 'Quad.easeOut',
       onUpdate: (_tween) => {
-        this.powderText.setText(`POWDER: ${Math.round(animationObj.value)}`);
+        const displayValue = Math.round(animationObj.value);
+        this.powderValue.setText(displayValue.toString());
+        // Also update hidden original for compatibility
+        this.powderText.setText(`POWDER: ${displayValue}`);
       }
     });
 
@@ -2256,7 +2314,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private applyPowderConsumptionCue(): void {
-    const powderDisplay = this.powderText;
+    const powderDisplay = this.powderValue;
     const originalColor = '#FFD700'; // Yellow - original powder color
 
     powderDisplay.setColor('#ff0000');
@@ -2274,7 +2332,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private applyPowderRewardCue(): void {
-    const powderDisplay = this.powderText;
+    const powderDisplay = this.powderValue;
     const originalColor = '#FFD700'; // Yellow - original powder color
 
     powderDisplay.setColor('#00ff00');
@@ -2319,6 +2377,79 @@ export class SlingshotScene extends Phaser.Scene {
         transactionDisplay.destroy();
       }
     });
+  }
+
+  private activateBonusModeVisual(): void {
+    if (this.bonusModeVisualActive) {
+      console.log('[BONUS] Bonus mode visual already active, skipping');
+      return;
+    }
+
+    console.log('[BONUS] Activating bonus mode visual effects');
+    this.bonusModeVisualActive = true;
+
+    // Define rainbow color palette
+    const RAINBOW_COLORS = [
+      '#ff0000', // Red
+      '#ff7f00', // Orange
+      '#ffff00', // Yellow
+      '#00ff00', // Green
+      '#0000ff', // Blue
+      '#4b0082', // Indigo
+      '#9400d3'  // Violet
+    ];
+
+    // Stop any previous animation
+    if (this.bonusModeAnimation) {
+      this.bonusModeAnimation.remove();
+      this.bonusModeAnimation = undefined;
+    }
+
+    // Rainbow color cycling
+    let colorIndex = 0;
+    this.bonusModeAnimation = this.time.addEvent({
+      delay: 150, // ms between color changes
+      loop: true,
+      callback: () => {
+        if (this.powderLabel && this.bonusModeVisualActive) {
+          this.powderLabel.setColor(RAINBOW_COLORS[colorIndex % RAINBOW_COLORS.length]);
+          colorIndex++;
+        }
+      }
+    });
+
+    // Size blinking effect (continuous pulse)
+    this.tweens.add({
+      targets: this.powderLabel,
+      scale: { from: 1.0, to: 1.15 },
+      duration: 400,
+      yoyo: true,
+      repeat: -1, // Infinite loop while bonus active
+      ease: 'Sine.easeInOut'
+    });
+  }
+
+  private deactivateBonusModeVisual(): void {
+    if (!this.bonusModeVisualActive) {
+      console.log('[BONUS] Bonus mode visual not active, skipping deactivation');
+      return;
+    }
+
+    console.log('[BONUS] Deactivating bonus mode visual effects');
+    this.bonusModeVisualActive = false;
+
+    // Stop color cycling
+    if (this.bonusModeAnimation) {
+      this.bonusModeAnimation.remove();
+      this.bonusModeAnimation = undefined;
+    }
+
+    // Stop size blinking animation
+    this.tweens.killTweensOf(this.powderLabel);
+
+    // Restore original appearance
+    this.powderLabel.setColor('#ffffff'); // Original white color
+    this.powderLabel.setScale(1.0); // Back to normal size
   }
 
   private applyStreakIncrementCue(): void {
