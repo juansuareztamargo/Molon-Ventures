@@ -38,6 +38,7 @@ interface ProjectileData {
   ring: Phaser.GameObjects.Arc;
   targetColor: number;
   fadingOut: boolean;
+  hasCollided: boolean;
   particles?: Phaser.GameObjects.Particles.ParticleEmitter;
 }
 
@@ -176,13 +177,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
-    // Don't update game state when round is complete or game is over
-    if (this.roundComplete || this.gameOver) {
-      return;
-    }
-
-    this.updateTargets();
-
+    // Update projectile lifecycle even when round/game is complete (for continuous rotation and cleanup)
     if (this.currentProjectile && !this.isDragging) {
       const sprite = this.currentProjectile.sprite;
       const ring = this.currentProjectile.ring;
@@ -200,6 +195,7 @@ export class SlingshotScene extends Phaser.Scene {
 
       const isOnGround = sprite.y > this.scale.height - GAME_SETTINGS.GROUND_HEIGHT - 30;
 
+      // Handle off-screen projectiles even after sequence completes
       if (isOffscreen && !this.currentProjectile.fadingOut) {
         console.log('[OFF-SCREEN] Projectile detected off-screen, cleaning up...');
         this.handleOffscreenProjectile();
@@ -227,12 +223,19 @@ export class SlingshotScene extends Phaser.Scene {
         this.currentProjectile.particles.setPosition(sprite.x, sprite.y);
       }
 
-      // Rotate arrow to point in direction of travel during flight
+      // Rotate arrow to point in direction of travel during flight (ALWAYS update when moving)
       if (!this.currentProjectile.fadingOut && (Math.abs(body.velocity.x) > 1 || Math.abs(body.velocity.y) > 1)) {
         const angle = Math.atan2(body.velocity.y, body.velocity.x);
         sprite.setRotation(angle);
       }
     }
+
+    // Don't update game state when round is complete or game is over
+    if (this.roundComplete || this.gameOver) {
+      return;
+    }
+
+    this.updateTargets();
 
     if (this.targetsRemainingInRound === 0 && 
         this.targetsSpawnedInRound === this.targetsInRound && 
@@ -244,7 +247,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private checkManualCollisions(): void {
-    if (!this.currentProjectile || this.currentProjectile.fadingOut) {
+    if (!this.currentProjectile || this.currentProjectile.fadingOut || this.currentProjectile.hasCollided) {
       return;
     }
 
@@ -627,6 +630,7 @@ export class SlingshotScene extends Phaser.Scene {
       ring,
       targetColor: TARGET_COLORS.RED,
       fadingOut: false,
+      hasCollided: false,
       particles,
     };
   }
@@ -1047,7 +1051,11 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.targets.forEach((targetData) => {
       this.physics.add.overlap(this.currentProjectile!.sprite, targetData.sprite, () => {
-        this.handleTargetHit(targetData);
+        // Prevent duplicate collision handling
+        if (this.currentProjectile && !this.currentProjectile.hasCollided) {
+          this.currentProjectile.hasCollided = true;
+          this.handleTargetHit(targetData);
+        }
       });
     });
 
@@ -1201,6 +1209,18 @@ export class SlingshotScene extends Phaser.Scene {
 
     console.log('[HIT] Target hit detected');
 
+    // Immediately disable projectile physics to prevent further interactions
+    if (this.currentProjectile) {
+      try {
+        const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+        if (body) {
+          body.enable = false;
+        }
+      } catch (_e) {
+        // Ignore
+      }
+    }
+
     this.targetsRemainingInRound--;
     this.hitsInSequence++;
     this.updateSequenceProgressText();
@@ -1339,13 +1359,40 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.currentProjectile.fadingOut = true;
 
+    // Stop physics immediately to prevent any movement during fade
+    try {
+      const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+      if (body) {
+        body.stop();
+        body.setVelocity(0, 0);
+        body.setAllowGravity(false);
+        body.enable = false;
+      }
+    } catch (_e) {
+      // Ignore
+    }
+
+    // Stop particle emission
+    if (this.currentProjectile.particles) {
+      try {
+        this.currentProjectile.particles.stop();
+      } catch (_e) {
+        // Ignore
+      }
+    }
+
     this.tweens.add({
       targets: [this.currentProjectile.sprite, this.currentProjectile.ring],
       alpha: 0,
-      duration: 500,
+      duration: 800,
       ease: 'Linear',
       onComplete: () => {
-        this.prepareNextShot();
+        try {
+          this.prepareNextShot();
+        } catch (_e) {
+          // Force cleanup if tween completion fails
+          this.currentProjectile = undefined;
+        }
         this.destroyJoypad();
       },
     });
@@ -1365,13 +1412,28 @@ export class SlingshotScene extends Phaser.Scene {
           body.setVelocity(0, 0);
           body.setAllowGravity(false);
           body.enable = false;
+          // Remove from physics world to ensure no further interactions
+          try {
+            body.world.remove(body);
+          } catch (_e) {
+            // Ignore if already removed
+          }
         }
       } catch (_error) {
         // Ignore cleanup errors during projectile teardown
       }
 
-      projectile.sprite.destroy();
-      projectile.ring.destroy();
+      try {
+        projectile.sprite.destroy();
+      } catch (_e) {
+        // Ignore if already destroyed
+      }
+
+      try {
+        projectile.ring.destroy();
+      } catch (_e) {
+        // Ignore if already destroyed
+      }
       
       // Clean up particle emitter
       if (projectile.particles) {
@@ -1391,6 +1453,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.projectileIdleTimer = 0;
     this.snappedVelocity = undefined;
+    this.resetDragState();
     
     console.log('[CLEANUP] prepareNextShot complete - ready for next shot');
   }
