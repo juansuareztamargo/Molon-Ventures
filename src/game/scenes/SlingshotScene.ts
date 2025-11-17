@@ -99,6 +99,9 @@ export class SlingshotScene extends Phaser.Scene {
   // Bonus mode visual tracking
   private bonusModeAnimation?: Phaser.Time.TimerEvent;
   private bonusModeVisualActive: boolean = false;
+  
+  // Powder cost display tracking
+  private powderCostDisplays: Map<TargetData, Phaser.GameObjects.Text> = new Map();
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -129,6 +132,16 @@ export class SlingshotScene extends Phaser.Scene {
       this.bonusModeAnimation = undefined;
     }
     this.bonusModeVisualActive = false;
+    
+    // Clean up powder cost displays
+    this.powderCostDisplays.forEach((costDisplay) => {
+      try {
+        costDisplay.destroy();
+      } catch (_e) {
+        // Ignore destruction errors
+      }
+    });
+    this.powderCostDisplays.clear();
 
     if (this.currentProjectile) {
       try {
@@ -154,6 +167,8 @@ export class SlingshotScene extends Phaser.Scene {
     if (this.targets.length > 0) {
       const existingTargets = [...this.targets];
       existingTargets.forEach((target) => {
+        // Clean up powder cost displays for all targets
+        this.removePowderCostDisplay(target);
         target.sprite.destroy();
         target.graphic.destroy();
         target.ring.destroy();
@@ -229,6 +244,21 @@ export class SlingshotScene extends Phaser.Scene {
       });
     }
 
+    // Enhanced ground detection for current projectile
+    if (this.currentProjectile && this.currentProjectile.sprite && !this.currentProjectile.shouldDestroy) {
+      const groundLevel = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
+      const projectileY = this.currentProjectile.sprite.y;
+      
+      // Debug logging for ground detection
+      console.log(`[GROUND-CHECK] Projectile Y: ${projectileY}, Ground Level: ${groundLevel}, Distance to ground: ${projectileY - groundLevel}`);
+      
+      // Check if projectile has hit or gone below ground level
+      if (projectileY >= groundLevel) {
+        console.log('[GROUND-IMPACT] Ground collision detected! Destroying projectile immediately');
+        this.destroyProjectileOnGroundImpact();
+      }
+    }
+
     // Update currentProjectile (being dragged/aimed) lifecycle
     if (this.currentProjectile && !this.isDragging) {
       const sprite = this.currentProjectile.sprite;
@@ -291,6 +321,22 @@ export class SlingshotScene extends Phaser.Scene {
       const ring = projectile.ring;
       const body = sprite.body as Phaser.Physics.Arcade.Body;
 
+      // Enhanced ground detection for active projectiles
+      if (!projectile.shouldDestroy) {
+        const groundLevel = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
+        const projectileY = projectile.sprite.y;
+        
+        // Debug logging for active projectile ground detection
+        console.log(`[GROUND-CHECK] Active Projectile Y: ${projectileY}, Ground Level: ${groundLevel}, Distance to ground: ${projectileY - groundLevel}`);
+        
+        // Check if active projectile has hit or gone below ground level
+        if (projectileY >= groundLevel) {
+          console.log('[GROUND-IMPACT] Ground collision detected for active projectile! Destroying immediately');
+          this.destroyActiveProjectileOnGroundImpact(projectile, i);
+          continue;
+        }
+      }
+
       // Check if projectile should be destroyed
       if (projectile.shouldDestroy && !projectile.fadingOut) {
         console.log('[UPDATE] Active projectile marked for destruction, cleaning up');
@@ -318,7 +364,7 @@ export class SlingshotScene extends Phaser.Scene {
         continue;
       }
 
-      // Handle ground collision (immediate destruction)
+      // Handle ground collision (immediate destruction) - backup check
       if (hasLowVelocity && isOnGround && !projectile.fadingOut && !projectile.shouldDestroy) {
         console.log('[GROUND-FADE] Active projectile on ground, destroying immediately');
         this.destroyActiveProjectileImmediately(projectile, i);
@@ -500,20 +546,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.missesInSequence = 0;
     this.shotsInCurrentSequence = 0;
     
-    // CRITICAL FIX: Reset ALL streak/bonus counters at sequence start
-    this.consecutivePerfects = 0;
-    this.bonusStageActive = false;
-    this.consecutiveHits = 0;
-    this.streakMultiplier = 1;
-    
-    // Reset bonus mode visual
-    this.deactivateBonusModeVisual();
-    
-    console.log('[SEQUENCE] Streak counters reset for new sequence');
-
-    // Update UI displays for reset streaks
-    this.streakCounterText.setText('Streak: 0');
-    this.streakMultiplierText.setText('x1');
+    // BONUS MODE PERSISTENCE: Do NOT reset bonus counters at sequence start
+    // Only reset sequence-specific counters, let bonus mode persist across sequences
+    console.log('[SEQUENCE] New sequence started - bonus mode counters preserved');
 
     // Clear any existing targets
     this.targets.forEach(target => this.removeTarget(target));
@@ -651,8 +686,114 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.targets.push(targetData);
 
+    // Create powder cost display inside the circle
+    this.spawnPowderCostDisplay(targetData);
+
     // DO NOT set up overlap here - it will be handled in launchProjectile()
     // This prevents duplicate collision handlers which cause freezes
+  }
+
+  private spawnPowderCostDisplay(circle: TargetData): void {
+    const costAmount = this.shotsInCurrentSequence + 1; // Cost based on position in sequence
+    
+    const costDisplay = this.add.text(
+      circle.fixedX,
+      circle.fixedY,
+      `${costAmount}`,
+      {
+        fontSize: '32px',
+        color: '#ffff00',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 2,
+        align: 'center'
+      }
+    ).setOrigin(0.5, 0.5);
+    
+    costDisplay.setDepth(15); // Above circle but below hit text
+    
+    // Store reference for tracking
+    this.powderCostDisplays.set(circle, costDisplay);
+    
+    console.log(`[COST] Displaying powder cost ${costAmount} inside circle at (${circle.fixedX}, ${circle.fixedY})`);
+  }
+
+  private updatePowderCostDisplay(): void {
+    this.powderCostDisplays.forEach((costDisplay, circle) => {
+      if (!costDisplay.active || !circle.graphic.active) {
+        // Clean up orphaned displays
+        this.powderCostDisplays.delete(circle);
+        try {
+          costDisplay.destroy();
+        } catch (_e) {
+          // Ignore destruction errors
+        }
+        return;
+      }
+      
+      const radiusRatio = circle.graphic.radius / circle.initialRadius; // 1.0 → 0.0
+      
+      // Scale text proportionally
+      costDisplay.setScale(radiusRatio);
+      
+      // Position at circle center
+      costDisplay.setPosition(circle.fixedX, circle.fixedY);
+      
+      // Fade as circle shrinks
+      costDisplay.setAlpha(radiusRatio);
+    });
+  }
+
+  private removePowderCostDisplay(circle: TargetData): void {
+    const costDisplay = this.powderCostDisplays.get(circle);
+    if (costDisplay) {
+      try {
+        costDisplay.destroy();
+      } catch (_e) {
+        // Ignore destruction errors
+      }
+      this.powderCostDisplays.delete(circle);
+    }
+  }
+
+  private createRewardDisplay(circle: TargetData, rewardAmount: number): void {
+    // Remove cost display if it exists
+    this.removePowderCostDisplay(circle);
+    
+    // Create reward display
+    const rewardDisplay = this.add.text(
+      circle.fixedX,
+      circle.fixedY,
+      `+${rewardAmount}`,
+      {
+        fontSize: '32px',
+        color: '#00ff00',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 2,
+        align: 'center'
+      }
+    ).setOrigin(0.5, 0.5);
+    
+    rewardDisplay.setDepth(20); // Above hit text
+    
+    // Animate growing and fading
+    this.tweens.add({
+      targets: rewardDisplay,
+      scale: {from: 0.5, to: 1.5},
+      alpha: {from: 1, to: 0},
+      duration: 1000,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        try {
+          rewardDisplay.destroy();
+        } catch (_e) {
+          // Ignore destruction errors
+        }
+      }
+    });
+    
+    console.log(`[REWARD] Displaying reward +${rewardAmount} at circle center (${circle.fixedX}, ${circle.fixedY})`);
   }
 
   private updateTargets(): void {
@@ -710,6 +851,9 @@ export class SlingshotScene extends Phaser.Scene {
     });
 
     this.targets = this.targets.filter((target) => target.graphic.active);
+    
+    // Update powder cost displays
+    this.updatePowderCostDisplay();
   }
 
   private handleTargetMiss(targetData: TargetData): void {
@@ -718,6 +862,19 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Handle miss mechanics (reset streaks/bonus)
     this.onMiss();
+
+    // Fade out powder cost display when circle is missed
+    const costDisplay = this.powderCostDisplays.get(targetData);
+    if (costDisplay) {
+      this.tweens.add({
+        targets: costDisplay,
+        alpha: 0,
+        duration: 500,
+        onComplete: () => {
+          this.removePowderCostDisplay(targetData);
+        }
+      });
+    }
 
     const missText = this.add.text(x, y, 'MISS', {
       fontSize: '32px',
@@ -1466,6 +1623,145 @@ export class SlingshotScene extends Phaser.Scene {
     }
   }
 
+  private destroyProjectileOnGroundImpact(): void {
+    if (!this.currentProjectile) {
+      console.log('[GROUND-IMPACT] No projectile to destroy');
+      return;
+    }
+    
+    console.log('[GROUND-IMPACT] Destroying projectile immediately on ground impact');
+    
+    const projectile = this.currentProjectile;
+    
+    // Register as miss
+    this.missesInSequence++;
+    
+    // Handle miss mechanics (reset streaks/bonus)
+    this.onMiss();
+    
+    try {
+      // Stop physics immediately
+      const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+      if (body) {
+        console.log('[DESTROY] Stopping physics body');
+        body.stop();
+        body.setVelocity(0, 0);
+        body.setAllowGravity(false);
+        body.enable = false;
+        try {
+          body.world.remove(body);
+        } catch (_e) {
+          // Ignore if already removed
+        }
+      }
+    } catch (error) {
+      console.log('[DESTROY] Error stopping physics:', error);
+    }
+    
+    // Stop trail particles immediately
+    if (projectile.particles) {
+      try {
+        console.log('[DESTROY] Stopping particles');
+        projectile.particles.stop();
+        projectile.particles.destroy();
+      } catch (_e) {
+        // Ignore particle cleanup errors
+      }
+    }
+    
+    // Destroy sprite and ring immediately
+    try {
+      console.log('[DESTROY] Removing sprite');
+      projectile.sprite.destroy();
+    } catch (error) {
+      console.log('[DESTROY] Error destroying sprite:', error);
+    }
+    
+    try {
+      console.log('[DESTROY] Removing ring');
+      projectile.ring.destroy();
+    } catch (error) {
+      console.log('[DESTROY] Error destroying ring:', error);
+    }
+    
+    // Clear projectile reference immediately
+    this.currentProjectile = undefined;
+    
+    // Clear joypad and reset state
+    this.destroyJoypad();
+    this.resetDragState();
+    
+    // Re-enable slingshot for next shot
+    this.enableSlingshot();
+    
+    console.log('[GROUND-IMPACT] Complete - projectile destroyed, slingshot enabled');
+  }
+
+  private destroyActiveProjectileOnGroundImpact(projectile: ProjectileData, index: number): void {
+    if (!projectile) {
+      console.log('[GROUND-IMPACT] No active projectile to destroy');
+      return;
+    }
+    
+    console.log('[GROUND-IMPACT] Destroying active projectile immediately on ground impact');
+    
+    // Register as miss
+    this.missesInSequence++;
+    
+    // Handle miss mechanics (reset streaks/bonus)
+    this.onMiss();
+    
+    try {
+      // Stop physics immediately
+      const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+      if (body) {
+        console.log('[DESTROY] Stopping physics body');
+        body.stop();
+        body.setVelocity(0, 0);
+        body.setAllowGravity(false);
+        body.enable = false;
+        try {
+          body.world.remove(body);
+        } catch (_e) {
+          // Ignore if already removed
+        }
+      }
+    } catch (error) {
+      console.log('[DESTROY] Error stopping physics:', error);
+    }
+    
+    // Stop trail particles immediately
+    if (projectile.particles) {
+      try {
+        console.log('[DESTROY] Stopping particles');
+        projectile.particles.stop();
+        projectile.particles.destroy();
+      } catch (_e) {
+        // Ignore particle cleanup errors
+      }
+    }
+    
+    // Destroy sprite and ring immediately
+    try {
+      console.log('[DESTROY] Removing sprite');
+      projectile.sprite.destroy();
+    } catch (error) {
+      console.log('[DESTROY] Error destroying sprite:', error);
+    }
+    
+    try {
+      console.log('[DESTROY] Removing ring');
+      projectile.ring.destroy();
+    } catch (error) {
+      console.log('[DESTROY] Error destroying ring:', error);
+    }
+    
+    // Remove from active array
+    this.activeProjectiles.splice(index, 1);
+    
+    console.log('[GROUND-IMPACT] Complete - active projectile destroyed from array');
+  }
+
   private destroyProjectileImmediately(): void {
     if (!this.currentProjectile) {
       console.log('[GROUND-FADE] No projectile to destroy');
@@ -1580,6 +1876,9 @@ export class SlingshotScene extends Phaser.Scene {
     // Display reward feedback
     this.displayPowderTransactionFeedback(finalReward, true);
     this.animatePowderCounter(oldPowder, this.powder, true);
+    
+    // Create reward display at circle center
+    this.createRewardDisplay(targetData, finalReward);
 
     // Create particle explosion effect at circle center
     this.createHitParticleExplosion(x, y, currentColor, powderReward);
@@ -1628,6 +1927,9 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private removeTarget(targetData: TargetData): void {
+    // Remove powder cost display if it exists
+    this.removePowderCostDisplay(targetData);
+    
     targetData.sprite.destroy();
     targetData.graphic.destroy();
     targetData.ring.destroy();
