@@ -81,6 +81,12 @@ export class SlingshotScene extends Phaser.Scene {
   private pointerOffsetY: number = 0;
   private shotsInCurrentSequence: number = 0;
 
+  // Advanced powder mechanics
+  private consecutivePerfects: number = 0;
+  private bonusStageActive: boolean = false;
+  private consecutiveHits: number = 0;
+  private streakMultiplier: number = 1;
+
   constructor() {
     super({ key: SCENES.SLINGSHOT });
     this.slingshotEnabled = true; // Initialize as enabled
@@ -149,6 +155,12 @@ export class SlingshotScene extends Phaser.Scene {
     this.hitsInSequence = 0;
     this.missesInSequence = 0;
     this.shotsInCurrentSequence = 0;
+
+    // Reset advanced powder mechanics
+    this.consecutivePerfects = 0;
+    this.bonusStageActive = false;
+    this.consecutiveHits = 0;
+    this.streakMultiplier = 1;
 
     this.currentRound = 1;
     this.targetsInRound = 1;
@@ -406,6 +418,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.missesInSequence = 0;
     this.shotsInCurrentSequence = 0;
     
+    // Reset sequence-specific counters (but keep overall streak/bonus tracking)
+    // Note: consecutiveHits, consecutivePerfects, bonusStageActive, streakMultiplier persist across sequences
+    
     // Clear any existing targets
     this.targets.forEach(target => this.removeTarget(target));
     this.targets = [];
@@ -606,6 +621,9 @@ export class SlingshotScene extends Phaser.Scene {
   private handleTargetMiss(targetData: TargetData): void {
     const x = targetData.fixedX;
     const y = targetData.fixedY;
+
+    // Handle miss mechanics (reset streaks/bonus)
+    this.onMiss();
 
     const missText = this.add.text(x, y, 'MISS', {
       fontSize: '32px',
@@ -1279,6 +1297,9 @@ export class SlingshotScene extends Phaser.Scene {
 
       this.missesInSequence++;
 
+      // Handle miss mechanics (reset streaks/bonus)
+      this.onMiss();
+
       // Stop physics IMMEDIATELY
       try {
         const body = sprite.body as Phaser.Physics.Arcade.Body | undefined;
@@ -1372,6 +1393,9 @@ export class SlingshotScene extends Phaser.Scene {
     // Register as miss
     this.missesInSequence++;
 
+    // Handle miss mechanics (reset streaks/bonus)
+    this.onMiss();
+
     try {
       // Stop physics immediately
       const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
@@ -1457,10 +1481,17 @@ export class SlingshotScene extends Phaser.Scene {
       hitQuality = 'HIT';
     }
 
-    this.powder += powderReward;
-    this.totalPowderEarned += powderReward;
-    if (powderReward > this.bestHit) {
-      this.bestHit = powderReward;
+    // Apply advanced powder mechanics
+    const finalReward = this.processPowderReward(powderReward, currentColor === TARGET_COLORS.PURPLE);
+    const shotCost = this.shotsInCurrentSequence;
+
+    // Display powder transaction (before adding reward)
+    this.displayPowderTransaction(shotCost, finalReward, this.powder + finalReward);
+
+    this.powder += finalReward;
+    this.totalPowderEarned += finalReward;
+    if (finalReward > this.bestHit) {
+      this.bestHit = finalReward;
     }
 
     // Create particle explosion effect at circle center
@@ -1476,7 +1507,7 @@ export class SlingshotScene extends Phaser.Scene {
     hitText.setOrigin(0.5);
     hitText.setDepth(101);
 
-    const powderPopup = this.add.text(x, y + 10, `+${powderReward} POWDER`, {
+    const powderPopup = this.add.text(x, y + 10, `+${finalReward} POWDER`, {
       fontSize: '28px',
       color: '#FFD700',
       fontStyle: 'bold',
@@ -1517,6 +1548,8 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private createHitParticleExplosion(x: number, y: number, color: number, quality: number): void {
+    console.log(`[PARTICLES] Creating explosion at (${x}, ${y}) with color ${color.toString(16)} quality ${quality}`);
+    
     // Create a temporary texture for particles if it doesn't exist
     const particleKey = `particle_${color}`;
     if (!this.textures.exists(particleKey)) {
@@ -1534,7 +1567,7 @@ export class SlingshotScene extends Phaser.Scene {
     const particleLifespan: number = 500 + quality * 200; // 700ms, 900ms, 1100ms, 1300ms
     const particleScale: number = 0.8 + quality * 0.3; // 1.1, 1.4, 1.7, 2.0 scale
 
-    // Create particle emitter
+    // Create particle emitter at EXACT circle center
     const particles = this.add.particles(x, y, particleKey, {
       speed: { min: particleSpeed * 0.5, max: particleSpeed },
       angle: { min: 0, max: 360 },
@@ -1547,13 +1580,143 @@ export class SlingshotScene extends Phaser.Scene {
     });
 
     particles.setDepth(150);
+    particles.setPosition(x, y); // Ensure exact positioning
 
-    // Emit particles once
+    // Emit particles once at exact position
     particles.explode(particleCount, x, y);
+
+    console.log(`[PARTICLES] Emitted ${particleCount} particles at (${x}, ${y})`);
 
     // Clean up the emitter after particles finish
     this.time.delayedCall(particleLifespan + 100, () => {
       particles.destroy();
+    });
+  }
+
+  private processPowderReward(baseReward: number, isPerfect: boolean): number {
+    let reward = baseReward;
+    
+    // Handle perfect hit tracking and bonus stage
+    if (isPerfect) {
+      this.consecutivePerfects++;
+      
+      // Activate bonus after 3 perfects
+      if (this.consecutivePerfects === 3) {
+        this.bonusStageActive = true;
+        this.showStatusIndicator('BONUS STAGE ACTIVATED!', '#00ff00', 'BONUS STAGE');
+      }
+      
+      // Apply bonus multiplier
+      if (this.bonusStageActive && this.consecutivePerfects > 3) {
+        const bonus = this.consecutivePerfects - 3; // 1, 2, 3, 4...
+        reward += bonus;
+        this.showStatusIndicator(`+${bonus} BONUS`, '#00ff00', 'BONUS');
+      }
+    } else {
+      // Non-perfect hit - exit bonus
+      if (this.bonusStageActive) {
+        this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
+      }
+      this.bonusStageActive = false;
+      this.consecutivePerfects = 0;
+    }
+    
+    // Track consecutive hits
+    this.consecutiveHits++;
+    this.updateStreakMultiplier();
+    
+    // Apply streak multiplier
+    reward *= this.streakMultiplier;
+    
+    return reward;
+  }
+
+  private onMiss(): void {
+    // Reset streak
+    if (this.streakMultiplier > 1) {
+      this.showStatusIndicator('STREAK LOST', '#ff6600', 'MULTIPLIER RESET');
+    }
+    this.streakMultiplier = 1;
+    this.consecutiveHits = 0;
+    
+    // Exit bonus stage
+    if (this.bonusStageActive) {
+      this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
+    }
+    this.bonusStageActive = false;
+    this.consecutivePerfects = 0;
+  }
+
+  private updateStreakMultiplier(): void {
+    if (this.consecutiveHits === 5) {
+      this.streakMultiplier = 2;
+      this.showStatusIndicator('2x MULTIPLIER', '#ffff00', 'STREAK');
+    } else if (this.consecutiveHits === 10) {
+      this.streakMultiplier = 3;
+      this.showStatusIndicator('3x MULTIPLIER', '#ffff00', 'STREAK');
+    } else if (this.consecutiveHits === 25) {
+      this.streakMultiplier = 4;
+      this.showStatusIndicator('4x MULTIPLIER', '#ffff00', 'STREAK');
+    } else if (this.consecutiveHits === 50) {
+      this.streakMultiplier = 5;
+      this.showStatusIndicator('5x MULTIPLIER', '#ffff00', 'STREAK');
+    }
+  }
+
+  private displayPowderTransaction(cost: number, reward: number, remaining: number): void {
+    const message = reward > 0 
+      ? `Cost: ${cost} | Reward: +${reward} | Powder: ${remaining}`
+      : `Cost: ${cost} | Reward: 0 | Powder: ${remaining}`;
+    
+    const text = this.add.text(
+      this.cameras.main.centerX,
+      100, // Top of screen
+      message,
+      {
+        fontSize: '20px',
+        color: reward > 0 ? '#00ff00' : '#ff0000',
+        backgroundColor: '#000000',
+        padding: {x: 10, y: 5}
+      }
+    ).setOrigin(0.5);
+    text.setDepth(250);
+    
+    // Fade and remove after 2 seconds
+    this.tweens.add({
+      targets: text,
+      alpha: {from: 1, to: 0},
+      duration: 1500,
+      delay: 500,
+      onComplete: () => text.destroy()
+    });
+  }
+
+  private showStatusIndicator(mainText: string, color: string, subText: string): void {
+    const container = this.add.container(this.cameras.main.centerX, 200);
+    
+    const main = this.add.text(0, 0, mainText, {
+      fontSize: '48px',
+      color: color,
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3
+    }).setOrigin(0.5);
+    
+    const sub = this.add.text(0, 50, subText, {
+      fontSize: '24px',
+      color: color
+    }).setOrigin(0.5);
+    
+    container.add([main, sub]);
+    container.setDepth(260);
+    
+    // Animate and remove
+    this.tweens.add({
+      targets: container,
+      scale: {from: 0.5, to: 1},
+      alpha: {from: 1, to: 0},
+      duration: 2000,
+      onComplete: () => container.destroy()
     });
   }
 
@@ -1747,12 +1910,15 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     const totalTargets = this.hitsInSequence + this.missesInSequence;
-    const successfulHit = this.missesInSequence === 0;
+    const successRate = totalTargets > 0 ? (this.hitsInSequence / totalTargets) : 0;
 
-    // If sequence was successful (all circles hit), auto-transition to next sequence
-    if (successfulHit) {
-      // Schedule next sequence after a brief moment
-      this.time.delayedCall(500, () => {
+    // Check if sequence meets 50% success rate requirement
+    if (successRate >= 0.5) {
+      // Success - show quick summary and auto-continue
+      this.showQuickSummary(successRate);
+      
+      // Schedule next sequence after 2 seconds
+      this.time.delayedCall(2000, () => {
         if (this.roundComplete) {
           this.nextRound();
         }
@@ -1760,7 +1926,7 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
-    // Sequence failed (missed at least 1 circle) - show summary screen with options
+    // Sequence failed (less than 50% success) - show summary screen with options
     const width = this.scale.width;
     const height = this.scale.height;
 
@@ -1923,6 +2089,35 @@ export class SlingshotScene extends Phaser.Scene {
       yoyo: true,
       repeat: -1,
       ease: 'Sine.easeInOut',
+    });
+  }
+
+  private showQuickSummary(successRate: number): void {
+    const summaryText = this.add.text(
+      this.cameras.main.centerX,
+      this.cameras.main.centerY,
+      `Sequence Success: ${(successRate * 100).toFixed(0)}%\nNext sequence starting...`,
+      {
+        fontSize: '32px',
+        color: '#ffffff',
+        align: 'center',
+        stroke: '#000000',
+        strokeThickness: 4,
+        backgroundColor: '#000000',
+        padding: {x: 20, y: 10}
+      }
+    ).setOrigin(0.5);
+    summaryText.setDepth(220);
+    
+    // Auto-fade and remove after 2 seconds
+    this.tweens.add({
+      targets: summaryText,
+      alpha: {from: 1, to: 0},
+      duration: 1500,
+      delay: 500,
+      onComplete: () => {
+        summaryText.destroy();
+      }
     });
   }
 
