@@ -78,6 +78,7 @@ export class SlingshotScene extends Phaser.Scene {
   private activePointer?: Phaser.Input.Pointer;
   private pointerOffsetX: number = 0;
   private pointerOffsetY: number = 0;
+  private shotsInCurrentSequence: number = 0;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -145,6 +146,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.hitsInSequence = 0;
     this.missesInSequence = 0;
+    this.shotsInCurrentSequence = 0;
 
     this.currentRound = 1;
     this.targetsInRound = 1;
@@ -197,11 +199,11 @@ export class SlingshotScene extends Phaser.Scene {
       const ring = this.currentProjectile.ring;
       const body = sprite.body as Phaser.Physics.Arcade.Body;
 
+      // Only despawn on left/right edges, allow projectile to go off top and come back down
       const isOffscreen =
         sprite.x < -50 ||
         sprite.x > this.scale.width + 50 ||
-        sprite.y > this.scale.height + 50 ||
-        sprite.y < -50;
+        sprite.y > this.scale.height + 50;
 
       const hasLowVelocity =
         Math.abs(body.velocity.x) < 1 &&
@@ -396,6 +398,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.sequenceActive = true;
     this.hitsInSequence = 0;
     this.missesInSequence = 0;
+    this.shotsInCurrentSequence = 0;
     
     // Clear any existing targets
     this.targets.forEach(target => this.removeTarget(target));
@@ -1096,8 +1099,19 @@ export class SlingshotScene extends Phaser.Scene {
       });
     });
 
-    // Cost per shot scales with sequence number (Round 1 = 1 powder, Round 2 = 2 powder, etc.)
-    const shotCost = this.currentRound;
+    // Increment shot counter for this sequence
+    this.shotsInCurrentSequence++;
+    
+    // Cost per shot scales with position in sequence (1st shot = 1 powder, 2nd = 2 powder, 3rd = 3 powder, etc.)
+    const shotCost = this.shotsInCurrentSequence;
+    
+    // Check if player has enough powder for this shot
+    if (this.powder < shotCost) {
+      // Not enough powder - undo the shot counter increment
+      this.shotsInCurrentSequence--;
+      return false;
+    }
+    
     this.powder -= shotCost;
     this.updatePowderText();
 
@@ -1419,6 +1433,9 @@ export class SlingshotScene extends Phaser.Scene {
         console.log('[GROUND-FADE] Error stopping particles:', error);
       }
     }
+
+    // Register as miss
+    this.missesInSequence++;
 
     console.log('[GROUND-FADE] Creating fade tween (800ms)');
     this.tweens.add({
@@ -1746,6 +1763,7 @@ export class SlingshotScene extends Phaser.Scene {
         this.sequenceActive = false;
         this.hitsInSequence = 0;
         this.missesInSequence = 0;
+        this.shotsInCurrentSequence = 0;
         
         // Clean up any existing projectiles and joypad
         this.prepareNextShot();
