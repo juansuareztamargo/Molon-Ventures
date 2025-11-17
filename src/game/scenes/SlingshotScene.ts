@@ -201,6 +201,7 @@ export class SlingshotScene extends Phaser.Scene {
       const isOnGround = sprite.y > this.scale.height - GAME_SETTINGS.GROUND_HEIGHT - 30;
 
       if (isOffscreen && !this.currentProjectile.fadingOut) {
+        console.log('[OFF-SCREEN] Projectile detected off-screen, cleaning up...');
         this.handleOffscreenProjectile();
       } else if (hasLowVelocity && isOnGround && !this.currentProjectile.fadingOut) {
         this.projectileIdleTimer += delta;
@@ -212,13 +213,24 @@ export class SlingshotScene extends Phaser.Scene {
         this.projectileIdleTimer = 0;
       }
 
+      // Manual radius-based collision detection for improved hit detection
+      if (!this.currentProjectile.fadingOut) {
+        this.checkManualCollisions();
+      }
+
       if (ring && !this.currentProjectile.fadingOut) {
         ring.setPosition(sprite.x, sprite.y);
       }
 
-      // Keep particle emitter following projectile
+      // Keep particle emitter following projectile and rotate arrow to velocity direction
       if (this.currentProjectile.particles && !this.currentProjectile.fadingOut) {
         this.currentProjectile.particles.setPosition(sprite.x, sprite.y);
+      }
+
+      // Rotate arrow to point in direction of travel during flight
+      if (!this.currentProjectile.fadingOut && (Math.abs(body.velocity.x) > 1 || Math.abs(body.velocity.y) > 1)) {
+        const angle = Math.atan2(body.velocity.y, body.velocity.x);
+        sprite.setRotation(angle);
       }
     }
 
@@ -228,6 +240,37 @@ export class SlingshotScene extends Phaser.Scene {
         !this.gameOver &&
         this.sequenceActive) {
       this.handleSequenceComplete();
+    }
+  }
+
+  private checkManualCollisions(): void {
+    if (!this.currentProjectile || this.currentProjectile.fadingOut) {
+      return;
+    }
+
+    const projectileX = this.currentProjectile.sprite.x;
+    const projectileY = this.currentProjectile.sprite.y;
+    const projectileRadius = 8; // Same as physics body
+
+    // Check distance to each target
+    for (const target of this.targets) {
+      if (target.hit) continue;
+
+      const targetX = target.fixedX;
+      const targetY = target.fixedY;
+      const targetRadius = target.graphic.radius;
+
+      // Calculate distance between centers
+      const dx = projectileX - targetX;
+      const dy = projectileY - targetY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // Check if projectile is within target radius
+      if (distance <= targetRadius + projectileRadius) {
+        console.log('[HIT] Manual collision detected!');
+        this.handleTargetHit(target);
+        return; // Exit after first hit
+      }
     }
   }
 
@@ -515,21 +558,32 @@ export class SlingshotScene extends Phaser.Scene {
 
     if (!this.textures.exists('projectile-arrow')) {
       const graphics = this.add.graphics();
-      graphics.fillStyle(COLORS.PROJECTILE, 1);
       
-      // Create arrow shape pointing right
+      // Create arrow as line with prominent arrowhead
+      // Arrow body (shaft)
+      graphics.fillStyle(COLORS.PROJECTILE, 1);
+      graphics.fillRect(0, 14, 30, 4); // Horizontal shaft
+      
+      // Arrowhead (triangle)
       graphics.beginPath();
-      graphics.moveTo(20, 10); // tip
-      graphics.lineTo(5, 5);   // left wing
-      graphics.lineTo(8, 10);  // back left
-      graphics.lineTo(5, 15);  // left wing bottom
-      graphics.lineTo(20, 10); // back to tip
+      graphics.moveTo(30, 8);  // Top of arrowhead
+      graphics.lineTo(42, 16); // Tip of arrow (pointing right)
+      graphics.lineTo(30, 24); // Bottom of arrowhead
+      graphics.lineTo(30, 8);  // Back to top
+      graphics.closePath();
       graphics.fillPath();
       
-      graphics.lineStyle(1, COLORS.WHITE, 0.6);
+      // Add white outline for visibility
+      graphics.lineStyle(2, COLORS.WHITE, 0.8);
+      graphics.strokeRect(0, 14, 30, 4);
+      graphics.beginPath();
+      graphics.moveTo(30, 8);
+      graphics.lineTo(42, 16);
+      graphics.lineTo(30, 24);
+      graphics.lineTo(30, 8);
       graphics.strokePath();
       
-      graphics.generateTexture('projectile-arrow', 25, 20);
+      graphics.generateTexture('projectile-arrow', 44, 32);
       graphics.destroy();
     }
 
@@ -587,23 +641,30 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
+    console.log('[INPUT] PointerDown - gameOver:', this.gameOver, 'roundComplete:', this.roundComplete, 'isDragging:', this.isDragging, 'hasProjectile:', !!this.currentProjectile, 'sequenceActive:', this.sequenceActive, 'powder:', this.powder);
+    
     if (this.gameOver || this.roundComplete) {
+      console.log('[INPUT] Blocked: gameOver or roundComplete');
       return;
     }
 
     if (this.isDragging || this.currentProjectile) {
+      console.log('[INPUT] Blocked: isDragging or currentProjectile exists');
       return;
     }
 
     const canPrepareShot = this.sequenceActive || this.countdownActive;
     if (!canPrepareShot) {
+      console.log('[INPUT] Blocked: sequence not active');
       return;
     }
 
     if (this.powder <= 0) {
+      console.log('[INPUT] Blocked: no powder');
       return;
     }
 
+    console.log('[INPUT] Creating joypad and projectile');
     const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
     const baseRadius = JOYPAD_BASE_RADIUS;
     const centerX = Phaser.Math.Clamp(pointer.x, baseRadius, this.scale.width - baseRadius);
@@ -737,6 +798,10 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.currentProjectile.sprite.setPosition(this.joypad.centerX, this.joypad.groundY);
     this.currentProjectile.ring.setPosition(this.joypad.centerX, this.joypad.groundY);
+
+    // Rotate arrow to point in drag direction (opposite of offset)
+    const aimAngle = Math.atan2(-offsetY, -offsetX);
+    this.currentProjectile.sprite.setRotation(aimAngle);
 
     this.joypad.powerLine.clear();
     this.joypad.powerLine.lineStyle(4, COLORS.PRIMARY, 0.6);
@@ -1006,16 +1071,21 @@ export class SlingshotScene extends Phaser.Scene {
 
   private handleOffscreenProjectile(): void {
     if (!this.currentProjectile) {
+      console.log('[OFF-SCREEN] No projectile to clean up');
       return;
     }
 
     const projectile = this.currentProjectile;
 
     if (projectile.fadingOut) {
+      console.log('[OFF-SCREEN] Projectile already fading out');
       return;
     }
 
+    console.log('[OFF-SCREEN] Starting cleanup sequence');
+
     try {
+      // Mark as fading out IMMEDIATELY to prevent re-entry
       projectile.fadingOut = true;
 
       const sprite = projectile.sprite;
@@ -1066,53 +1136,70 @@ export class SlingshotScene extends Phaser.Scene {
 
       this.missesInSequence++;
 
+      // Stop physics IMMEDIATELY
       try {
         const body = sprite.body as Phaser.Physics.Arcade.Body | undefined;
         if (body) {
+          console.log('[OFF-SCREEN] Stopping physics body');
           body.stop();
           body.setVelocity(0, 0);
           body.setAllowGravity(false);
           body.enable = false;
+          body.world.remove(body);
         }
-      } catch (_error) {
-        // Ignore cleanup errors when disabling offscreen projectile
+      } catch (error) {
+        console.log('[OFF-SCREEN] Error stopping physics:', error);
       }
 
-      sprite.setVisible(false);
-      projectile.ring.setVisible(false);
+      // Stop trail particles immediately
+      if (projectile.particles) {
+        try {
+          projectile.particles.stop();
+        } catch (_e) {
+          // Ignore
+        }
+      }
 
-      // Immediately clean up the projectile
-      this.prepareNextShot();
+      // Destroy sprite IMMEDIATELY (don't just hide it)
+      console.log('[OFF-SCREEN] Destroying projectile and ring');
+      try {
+        sprite.destroy();
+        projectile.ring.destroy();
+        if (projectile.particles) {
+          projectile.particles.destroy();
+        }
+      } catch (error) {
+        console.log('[OFF-SCREEN] Error destroying objects:', error);
+      }
+
+      // Clear projectile reference IMMEDIATELY
+      this.currentProjectile = undefined;
+      console.log('[OFF-SCREEN] Projectile reference cleared');
+
+      // Clear joypad and reset state
       this.destroyJoypad();
       this.resetDragState();
-    } catch (_error) {
+      
+      console.log('[OFF-SCREEN] Cleanup complete, input re-enabled');
+    } catch (error) {
+      console.log('[OFF-SCREEN] Fatal error during cleanup:', error);
       // Failsafe: force cleanup if any error occurs
       try {
-        this.prepareNextShot();
+        this.currentProjectile = undefined;
         this.destroyJoypad();
         this.resetDragState();
       } catch (_e2) {
-        // Last resort: mark projectile as cleaned
+        // Last resort: just clear the reference
         this.currentProjectile = undefined;
       }
     }
-
-    // Timeout failsafe: ensure cleanup within 5 seconds
-    this.time.delayedCall(5000, () => {
-      if (this.currentProjectile === projectile && projectile.fadingOut) {
-        try {
-          this.prepareNextShot();
-          this.destroyJoypad();
-        } catch (_e) {
-          this.currentProjectile = undefined;
-        }
-      }
-    });
   }
 
   private handleTargetHit(targetData: TargetData): void {
     if (targetData.hit) return;
     targetData.hit = true;
+
+    console.log('[HIT] Target hit detected');
 
     this.targetsRemainingInRound--;
     this.hitsInSequence++;
@@ -1145,7 +1232,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.bestHit = powderReward;
     }
 
-    // Create particle explosion effect based on hit quality
+    // Create particle explosion effect at circle center
     this.createHitParticleExplosion(x, y, currentColor, powderReward);
 
     const hitText = this.add.text(x, y - 20, hitQuality, {
@@ -1189,11 +1276,14 @@ export class SlingshotScene extends Phaser.Scene {
     this.updatePowderText();
     
     // Immediately destroy projectile on hit
+    console.log('[HIT] Cleaning up projectile');
     this.prepareNextShot();
     
     // Clear joypad UI and reset drag state to allow next shot
     this.destroyJoypad();
     this.resetDragState();
+    
+    console.log('[HIT] Cleanup complete, input should be re-enabled');
   }
 
   private removeTarget(targetData: TargetData): void {
@@ -1262,8 +1352,12 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private prepareNextShot(): void {
+    console.log('[CLEANUP] prepareNextShot called');
+    
     if (this.currentProjectile) {
       const projectile = this.currentProjectile;
+      console.log('[CLEANUP] Destroying projectile');
+      
       try {
         const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
         if (body) {
@@ -1290,10 +1384,15 @@ export class SlingshotScene extends Phaser.Scene {
       }
       
       this.currentProjectile = undefined;
+      console.log('[CLEANUP] Projectile destroyed and reference cleared');
+    } else {
+      console.log('[CLEANUP] No projectile to clean up');
     }
 
     this.projectileIdleTimer = 0;
     this.snappedVelocity = undefined;
+    
+    console.log('[CLEANUP] prepareNextShot complete - ready for next shot');
   }
 
   private createUI(): void {
