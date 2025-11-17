@@ -56,6 +56,8 @@ export class SlingshotScene extends Phaser.Scene {
   private powderText!: Phaser.GameObjects.Text;
   private instructionsText!: Phaser.GameObjects.Text;
   private sequenceProgressText!: Phaser.GameObjects.Text;
+  private streakCounterText!: Phaser.GameObjects.Text;
+  private streakMultiplierText!: Phaser.GameObjects.Text;
 
   private isDragging: boolean = false;
   private currentProjectile?: ProjectileData;
@@ -66,7 +68,6 @@ export class SlingshotScene extends Phaser.Scene {
   private ground!: Phaser.GameObjects.Rectangle;
 
   private joypad?: JoypadUI;
-  private projectileIdleTimer: number = 0;
   private snappedVelocity?: { vx: number; vy: number };
 
   private roundComplete: boolean = false;
@@ -87,6 +88,11 @@ export class SlingshotScene extends Phaser.Scene {
   private bonusStageActive: boolean = false;
   private consecutiveHits: number = 0;
   private streakMultiplier: number = 1;
+  
+  // Powder animation tracking
+  private powderAnimationTween?: Phaser.Tweens.Tween;
+  private powderCounterX: number = 20;
+  private powderCounterY: number = 20;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -144,7 +150,6 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.resetDragState();
 
-    this.projectileIdleTimer = 0;
     this.snappedVelocity = undefined;
 
     this.roundComplete = false;
@@ -197,7 +202,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.startCountdown();
   }
 
-  update(_time: number, delta: number): void {
+  update(_time: number, _delta: number): void {
     // Handle deferred projectile destruction (CRITICAL: outside collision handlers)
     if (this.currentProjectile && this.currentProjectile.shouldDestroy && !this.currentProjectile.fadingOut) {
       console.log('[UPDATE] Processing deferred projectile destruction');
@@ -234,14 +239,8 @@ export class SlingshotScene extends Phaser.Scene {
         console.log('[OFF-SCREEN] Projectile detected off-screen, cleaning up...');
         this.handleOffscreenProjectile();
       } else if (hasLowVelocity && isOnGround && !this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
-        this.projectileIdleTimer += delta;
-
-        if (this.projectileIdleTimer >= GAME_SETTINGS.PROJECTILE_IDLE_TIME) {
-          console.log('[GROUND-FADE] Projectile idle on ground, starting fade animation');
-          this.fadeOutProjectile();
-        }
-      } else {
-        this.projectileIdleTimer = 0;
+        console.log('[GROUND-FADE] Projectile detected on ground, destroying immediately');
+        this.destroyProjectileImmediately();
       }
 
       // Manual radius-based collision detection for improved hit detection
@@ -494,11 +493,15 @@ export class SlingshotScene extends Phaser.Scene {
     this.consecutiveHits = 0;
     this.streakMultiplier = 1;
     console.log('[SEQUENCE] Streak counters reset for new sequence');
-    
+
+    // Update UI displays for reset streaks
+    this.streakCounterText.setText('Streak: 0');
+    this.streakMultiplierText.setText('x1');
+
     // Clear any existing targets
     this.targets.forEach(target => this.removeTarget(target));
     this.targets = [];
-    
+
     this.updateRoundText();
     this.updateSequenceProgressText();
     
@@ -931,11 +934,6 @@ export class SlingshotScene extends Phaser.Scene {
     console.log('[INPUT] Slingshot ENABLED');
   }
 
-  private disableSlingshot(): void {
-    this.slingshotEnabled = false;
-    console.log('[INPUT] Slingshot DISABLED');
-  }
-
   private createJoypad(x: number, groundY: number): void {
     const container = this.add.container(0, 0);
 
@@ -1206,6 +1204,16 @@ export class SlingshotScene extends Phaser.Scene {
       return false;
     }
 
+    // Cost per shot scales with position in sequence (1st shot = 1 powder, 2nd = 2 powder, etc.)
+    const nextShotCost = this.shotsInCurrentSequence + 1;
+    
+    // Check if player has enough powder for next shot
+    if (this.powder < nextShotCost) {
+      console.log('[INPUT] Insufficient powder for shot. Have:', this.powder, 'Need:', nextShotCost);
+      this.triggerGameOver();
+      return false;
+    }
+
     let velocityX: number;
     let velocityY: number;
 
@@ -1281,18 +1289,12 @@ export class SlingshotScene extends Phaser.Scene {
     
     // Cost per shot scales with position in sequence (1st shot = 1 powder, 2nd = 2 powder, 3rd = 3 powder, etc.)
     const shotCost = this.shotsInCurrentSequence;
+    const oldPowder = this.powder;
     
-    // Check if player has enough powder for this shot
-    if (this.powder < shotCost) {
-      // Not enough powder - undo the shot counter increment
-      this.shotsInCurrentSequence--;
-      return false;
-    }
-    
+    // Deduct powder and animate
     this.powder -= shotCost;
-    this.updatePowderText();
-
-    this.projectileIdleTimer = 0;
+    this.displayPowderTransactionFeedback(shotCost, false);
+    this.animatePowderCounter(oldPowder, this.powder, false);
 
     // CRITICAL FIX: Add projectile to active array and clear currentProjectile for concurrent shooting
     if (this.currentProjectile) {
@@ -1301,14 +1303,6 @@ export class SlingshotScene extends Phaser.Scene {
       
       // Clear currentProjectile immediately so next shot can be prepared
       this.currentProjectile = undefined;
-    }
-
-    if (this.powder <= 0) {
-      this.time.delayedCall(2000, () => {
-        if (!this.gameOver) {
-          this.handleGameOver();
-        }
-      });
     }
 
     return true;
@@ -1455,23 +1449,6 @@ export class SlingshotScene extends Phaser.Scene {
     }
   }
 
-  private onProjectileGroundCollide(): void {
-    if (!this.currentProjectile) {
-      console.log('[GROUND-FADE] Ground collision but no projectile');
-      return;
-    }
-
-    if (this.currentProjectile.fadingOut || this.currentProjectile.shouldDestroy) {
-      console.log('[GROUND-FADE] Projectile already being cleaned up');
-      return;
-    }
-
-    console.log('[GROUND-FADE] Ground collision detected - destroying immediately');
-    
-    // Destroy immediately (no fade, no delay)
-    this.destroyProjectileImmediately();
-  }
-
   private destroyProjectileImmediately(): void {
     if (!this.currentProjectile) {
       console.log('[GROUND-FADE] No projectile to destroy');
@@ -1575,16 +1552,17 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Apply advanced powder mechanics
     const finalReward = this.processPowderReward(powderReward, currentColor === TARGET_COLORS.PURPLE);
-    const shotCost = this.shotsInCurrentSequence;
-
-    // Display powder transaction (before adding reward)
-    this.displayPowderTransaction(shotCost, finalReward, this.powder + finalReward);
+    const oldPowder = this.powder;
 
     this.powder += finalReward;
     this.totalPowderEarned += finalReward;
     if (finalReward > this.bestHit) {
       this.bestHit = finalReward;
     }
+
+    // Display reward feedback
+    this.displayPowderTransactionFeedback(finalReward, true);
+    this.animatePowderCounter(oldPowder, this.powder, true);
 
     // Create particle explosion effect at circle center
     this.createHitParticleExplosion(x, y, currentColor, powderReward);
@@ -1719,6 +1697,12 @@ export class SlingshotScene extends Phaser.Scene {
     // Apply streak multiplier
     reward *= this.streakMultiplier;
     
+    // Update streak display
+    this.streakCounterText.setText(`Streak: ${this.consecutiveHits}`);
+    
+    // Apply streak increment cue
+    this.applyStreakIncrementCue();
+    
     return reward;
   }
 
@@ -1736,50 +1720,42 @@ export class SlingshotScene extends Phaser.Scene {
     }
     this.bonusStageActive = false;
     this.consecutivePerfects = 0;
+    
+    // Update streak displays
+    this.streakCounterText.setText('Streak: 0');
+    this.streakMultiplierText.setText('x1');
+    
+    // Flash red briefly to indicate streak broken
+    this.resetStreakDisplay();
   }
 
   private updateStreakMultiplier(): void {
+    const previousMultiplier = this.streakMultiplier;
+    
     if (this.consecutiveHits === 5) {
       this.streakMultiplier = 2;
+      this.streakMultiplierText.setText('x2');
       this.showStatusIndicator('2x MULTIPLIER', '#ffff00', 'STREAK');
+      this.applyMultiplierUpgradeCue();
     } else if (this.consecutiveHits === 10) {
       this.streakMultiplier = 3;
+      this.streakMultiplierText.setText('x3');
       this.showStatusIndicator('3x MULTIPLIER', '#ffff00', 'STREAK');
+      this.applyMultiplierUpgradeCue();
     } else if (this.consecutiveHits === 25) {
       this.streakMultiplier = 4;
+      this.streakMultiplierText.setText('x4');
       this.showStatusIndicator('4x MULTIPLIER', '#ffff00', 'STREAK');
+      this.applyMultiplierUpgradeCue();
     } else if (this.consecutiveHits === 50) {
       this.streakMultiplier = 5;
+      this.streakMultiplierText.setText('x5');
       this.showStatusIndicator('5x MULTIPLIER', '#ffff00', 'STREAK');
+      this.applyMultiplierUpgradeCue();
+    } else if (previousMultiplier === this.streakMultiplier) {
+      // Update multiplier text if it changed from calculation
+      this.streakMultiplierText.setText(`x${this.streakMultiplier}`);
     }
-  }
-
-  private displayPowderTransaction(cost: number, reward: number, remaining: number): void {
-    const message = reward > 0 
-      ? `Cost: ${cost} | Reward: +${reward} | Powder: ${remaining}`
-      : `Cost: ${cost} | Reward: 0 | Powder: ${remaining}`;
-    
-    const text = this.add.text(
-      this.cameras.main.centerX,
-      100, // Top of screen
-      message,
-      {
-        fontSize: '20px',
-        color: reward > 0 ? '#00ff00' : '#ff0000',
-        backgroundColor: '#000000',
-        padding: {x: 10, y: 5}
-      }
-    ).setOrigin(0.5);
-    text.setDepth(250);
-    
-    // Fade and remove after 2 seconds
-    this.tweens.add({
-      targets: text,
-      alpha: {from: 1, to: 0},
-      duration: 1500,
-      delay: 500,
-      onComplete: () => text.destroy()
-    });
   }
 
   private showStatusIndicator(mainText: string, color: string, subText: string): void {
@@ -1862,7 +1838,6 @@ export class SlingshotScene extends Phaser.Scene {
     this.currentProjectile = undefined;
     
     // Reset state to allow next shot
-    this.projectileIdleTimer = 0;
     this.snappedVelocity = undefined;
     this.destroyJoypad();
     this.resetDragState();
@@ -1926,7 +1901,6 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[CLEANUP] No projectile to clean up');
     }
 
-    this.projectileIdleTimer = 0;
     this.snappedVelocity = undefined;
     this.resetDragState();
     
@@ -2221,6 +2195,26 @@ export class SlingshotScene extends Phaser.Scene {
     this.sequenceProgressText.setOrigin(1, 0);
     this.sequenceProgressText.setDepth(100);
 
+    this.streakCounterText = this.add.text(
+      width / 2,
+      80,
+      'Streak: 0',
+      createTextStyle('24px', '#ffff00')
+    );
+    this.streakCounterText.setOrigin(0.5, 0);
+    this.streakCounterText.setDepth(100);
+    this.streakCounterText.setStroke('#000000', 2);
+
+    this.streakMultiplierText = this.add.text(
+      width / 2,
+      130,
+      'x1',
+      createTextStyle('28px', '#ffaa00')
+    );
+    this.streakMultiplierText.setOrigin(0.5, 0);
+    this.streakMultiplierText.setDepth(100);
+    this.streakMultiplierText.setStroke('#000000', 2);
+
     this.instructionsText = this.add.text(
       width / 2,
       height - 30,
@@ -2233,6 +2227,134 @@ export class SlingshotScene extends Phaser.Scene {
 
   private updatePowderText(): void {
     this.powderText.setText(`POWDER: ${this.powder}`);
+  }
+
+  private animatePowderCounter(oldValue: number, newValue: number, isReward: boolean): void {
+    // Kill any existing tween to prevent conflicts
+    if (this.powderAnimationTween) {
+      this.powderAnimationTween.destroy();
+    }
+
+    const animationObj: { value: number } = { value: oldValue };
+    
+    this.powderAnimationTween = this.tweens.add({
+      targets: animationObj,
+      value: newValue,
+      duration: 500,
+      ease: 'Quad.easeOut',
+      onUpdate: (_tween) => {
+        this.powderText.setText(`POWDER: ${Math.round(animationObj.value)}`);
+      }
+    });
+
+    // Apply cue effect to powder counter
+    if (isReward) {
+      this.applyPowderRewardCue();
+    } else {
+      this.applyPowderConsumptionCue();
+    }
+  }
+
+  private applyPowderConsumptionCue(): void {
+    const powderDisplay = this.powderText;
+    const originalColor = '#FFD700'; // Yellow - original powder color
+
+    powderDisplay.setColor('#ff0000');
+    powderDisplay.setScale(0.7);
+
+    this.tweens.add({
+      targets: powderDisplay,
+      scale: { from: 0.7, to: 1.0 },
+      duration: 600,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        powderDisplay.setColor(originalColor);
+      }
+    });
+  }
+
+  private applyPowderRewardCue(): void {
+    const powderDisplay = this.powderText;
+    const originalColor = '#FFD700'; // Yellow - original powder color
+
+    powderDisplay.setColor('#00ff00');
+    powderDisplay.setScale(1.3);
+
+    this.tweens.add({
+      targets: powderDisplay,
+      scale: { from: 1.3, to: 1.0 },
+      duration: 600,
+      ease: 'Back.easeOut',
+      onComplete: () => {
+        powderDisplay.setColor(originalColor);
+      }
+    });
+  }
+
+  private displayPowderTransactionFeedback(amount: number, isReward: boolean): void {
+    const color = isReward ? '#00ff00' : '#ff0000';
+    const sign = isReward ? '+' : '-';
+    const transactionText = `${sign}${Math.abs(amount)}`;
+
+    const transactionDisplay = this.add.text(
+      this.powderCounterX + 120,
+      this.powderCounterY,
+      transactionText,
+      {
+        fontSize: '28px',
+        color: color,
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 2
+      }
+    ).setOrigin(0.5, 0.5);
+    transactionDisplay.setDepth(100);
+
+    this.tweens.add({
+      targets: transactionDisplay,
+      alpha: { from: 1, to: 0 },
+      duration: 1500,
+      delay: 300,
+      onComplete: () => {
+        transactionDisplay.destroy();
+      }
+    });
+  }
+
+  private applyStreakIncrementCue(): void {
+    this.tweens.add({
+      targets: this.streakMultiplierText,
+      scale: { from: 1.0, to: 1.15 },
+      duration: 300,
+      ease: 'Back.easeOut'
+    });
+  }
+
+  private applyMultiplierUpgradeCue(): void {
+    this.tweens.add({
+      targets: this.streakMultiplierText,
+      scale: { from: 1.0, to: 1.4 },
+      duration: 500,
+      ease: 'Elastic.easeOut',
+      easeParams: [1.5, 0.5]
+    });
+
+    // Flash to bright color
+    const originalColor = '#ffaa00'; // Orange - original multiplier color
+    this.streakMultiplierText.setColor('#ffff00');
+
+    this.time.delayedCall(250, () => {
+      this.streakMultiplierText.setColor(originalColor);
+    });
+  }
+
+  private resetStreakDisplay(): void {
+    const originalColor = '#ffaa00'; // Orange - original multiplier color
+    this.streakMultiplierText.setColor('#ff0000');
+
+    this.time.delayedCall(300, () => {
+      this.streakMultiplierText.setColor(originalColor);
+    });
   }
 
   private updateRoundText(): void {
@@ -2476,6 +2598,43 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Start next sequence with countdown for consistency
     this.startCountdown();
+  }
+
+  private triggerGameOver(): void {
+    if (this.gameOver) return;
+    
+    // Stop all active projectiles
+    this.activeProjectiles.forEach((projectile) => {
+      try {
+        const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+        if (body) {
+          body.stop();
+          body.setVelocity(0, 0);
+          body.setAllowGravity(false);
+          body.enable = false;
+        }
+        projectile.sprite.destroy();
+        projectile.ring.destroy();
+        if (projectile.particles) {
+          projectile.particles.stop();
+          projectile.particles.destroy();
+        }
+      } catch (_e) {
+        // Ignore cleanup errors
+      }
+    });
+    this.activeProjectiles = [];
+    
+    // Clean up current projectile
+    this.prepareNextShot();
+    this.destroyJoypad();
+    
+    // Clean up targets
+    this.targets.forEach(target => this.removeTarget(target));
+    this.targets = [];
+    
+    // Show game over screen
+    this.handleGameOver();
   }
 
   private handleGameOver(): void {
