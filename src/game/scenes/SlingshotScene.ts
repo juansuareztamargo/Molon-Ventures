@@ -443,16 +443,66 @@ export class SlingshotScene extends Phaser.Scene {
     this.updateSequenceProgressText();
   }
 
+  private findValidCirclePosition(screenWidth: number, screenHeight: number, radius: number): { x: number; y: number } {
+    const MIN_CIRCLE_DISTANCE = 150; // pixels between circle centers
+    const SCREEN_PADDING = 100; // distance from screen edges
+    const maxAttempts = 50;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const x = SCREEN_PADDING + Math.random() * (screenWidth - 2 * SCREEN_PADDING);
+      const y = SCREEN_PADDING + Math.random() * (screenHeight * 0.4); // Upper 40% of screen
+      
+      if (this.isValidCirclePosition(x, y, radius, MIN_CIRCLE_DISTANCE)) {
+        return { x, y };
+      }
+    }
+
+    // Fallback: return random position if we couldn't find valid one after max attempts
+    console.warn('Could not find valid circle position after max attempts, using fallback');
+    const fallbackX = SCREEN_PADDING + Math.random() * (screenWidth - 2 * SCREEN_PADDING);
+    const fallbackY = SCREEN_PADDING + Math.random() * (screenHeight * 0.4);
+    return { x: fallbackX, y: fallbackY };
+  }
+
+  private isValidCirclePosition(x: number, y: number, radius: number, minDistance: number): boolean {
+    const SCREEN_PADDING = 100;
+    const screenWidth = this.scale.width;
+    const screenHeight = this.scale.height;
+
+    // Check screen bounds (with padding)
+    if (x - radius < SCREEN_PADDING || x + radius > screenWidth - SCREEN_PADDING) {
+      return false;
+    }
+    if (y - radius < SCREEN_PADDING || y + radius > screenHeight - SCREEN_PADDING) {
+      return false;
+    }
+
+    // Check distance from other circles
+    for (const target of this.targets) {
+      const dx = x - target.fixedX;
+      const dy = y - target.fixedY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const requiredDistance = minDistance + radius + target.initialRadius;
+
+      if (distance < requiredDistance) {
+        return false; // Too close to another circle
+      }
+    }
+
+    return true; // Valid position
+  }
+
   private spawnTarget(): void {
     const width = this.scale.width;
     const height = this.scale.height;
 
-    const fixedX = Phaser.Math.Between(200, width - 200);
-    // Ensure circles spawn in upper 50% of screen (between 10% and 50% of screen height)
-    const fixedY = Phaser.Math.Between(height * 0.1, height * 0.5);
-
     const initialRadius = 60;
     const lifetime = 5000;
+
+    // Find valid circle position with proper spacing
+    const validPosition = this.findValidCirclePosition(width, height, initialRadius);
+    const fixedX = validPosition.x;
+    const fixedY = validPosition.y;
 
     const sprite = this.physics.add.sprite(fixedX, fixedY, '');
     sprite.setDisplaySize(0, 0);
@@ -1079,7 +1129,10 @@ export class SlingshotScene extends Phaser.Scene {
       return false;
     }
 
-    this.physics.add.collider(this.currentProjectile.sprite, this.ground);
+    // Set up ground collision with callback to trigger fade immediately
+    this.physics.add.collider(this.currentProjectile.sprite, this.ground, () => {
+      this.onProjectileGroundCollide();
+    });
 
     // Set up overlap detection for all current targets
     this.targets.forEach((targetData) => {
@@ -1260,6 +1313,29 @@ export class SlingshotScene extends Phaser.Scene {
         this.currentProjectile = undefined;
       }
     }
+  }
+
+  private onProjectileGroundCollide(): void {
+    if (!this.currentProjectile) {
+      console.log('[GROUND-FADE] Ground collision but no projectile');
+      return;
+    }
+
+    if (this.currentProjectile.fadingOut || this.currentProjectile.shouldDestroy) {
+      console.log('[GROUND-FADE] Projectile already being cleaned up');
+      return;
+    }
+
+    console.log('[GROUND-FADE] Ground collision detected, queueing fade');
+    this.currentProjectile.fadingOut = true;
+    this.currentProjectile.shouldDestroy = true;
+
+    // Queue fade for next frame to ensure safe cleanup
+    this.time.delayedCall(1, () => {
+      if (this.currentProjectile && this.currentProjectile.fadingOut) {
+        this.fadeOutProjectile();
+      }
+    });
   }
 
   private handleTargetHit(targetData: TargetData): void {
