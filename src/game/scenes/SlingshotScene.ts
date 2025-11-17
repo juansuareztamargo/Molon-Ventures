@@ -59,6 +59,7 @@ export class SlingshotScene extends Phaser.Scene {
 
   private isDragging: boolean = false;
   private currentProjectile?: ProjectileData;
+  private activeProjectiles: ProjectileData[] = [];
   private slingshotEnabled: boolean = true;
 
   private targets: TargetData[] = [];
@@ -210,7 +211,7 @@ export class SlingshotScene extends Phaser.Scene {
       });
     }
 
-    // Update projectile lifecycle even when round/game is complete (for continuous rotation and cleanup)
+    // Update currentProjectile (being dragged/aimed) lifecycle
     if (this.currentProjectile && !this.isDragging) {
       const sprite = this.currentProjectile.sprite;
       const ring = this.currentProjectile.ring;
@@ -260,6 +261,75 @@ export class SlingshotScene extends Phaser.Scene {
 
       // Rotate arrow to point in direction of travel during flight (ALWAYS update when moving)
       if (this.currentProjectile && !this.currentProjectile.fadingOut && (Math.abs(body.velocity.x) > 1 || Math.abs(body.velocity.y) > 1)) {
+        const angle = Math.atan2(body.velocity.y, body.velocity.x);
+        sprite.setRotation(angle);
+      }
+    }
+
+    // CRITICAL FIX: Update ALL active projectiles for concurrent shooting
+    for (let i = this.activeProjectiles.length - 1; i >= 0; i--) {
+      const projectile = this.activeProjectiles[i];
+      
+      if (!projectile || !projectile.sprite || !projectile.sprite.active) {
+        this.activeProjectiles.splice(i, 1);
+        continue;
+      }
+
+      const sprite = projectile.sprite;
+      const ring = projectile.ring;
+      const body = sprite.body as Phaser.Physics.Arcade.Body;
+
+      // Check if projectile should be destroyed
+      if (projectile.shouldDestroy && !projectile.fadingOut) {
+        console.log('[UPDATE] Active projectile marked for destruction, cleaning up');
+        projectile.shouldDestroy = false;
+        this.cleanupActiveProjectile(projectile, i);
+        continue;
+      }
+
+      // Only despawn on left/right edges, allow projectile to go off top and come back down
+      const isOffscreen =
+        sprite.x < -50 ||
+        sprite.x > this.scale.width + 50 ||
+        sprite.y > this.scale.height + 50;
+
+      const hasLowVelocity =
+        Math.abs(body.velocity.x) < 1 &&
+        Math.abs(body.velocity.y) < 1;
+
+      const isOnGround = sprite.y > this.scale.height - GAME_SETTINGS.GROUND_HEIGHT - 30;
+
+      // Handle off-screen projectiles
+      if (isOffscreen && !projectile.fadingOut && !projectile.shouldDestroy) {
+        console.log('[OFF-SCREEN] Active projectile detected off-screen, cleaning up...');
+        this.handleOffscreenActiveProjectile(projectile, i);
+        continue;
+      }
+
+      // Handle ground collision (immediate destruction)
+      if (hasLowVelocity && isOnGround && !projectile.fadingOut && !projectile.shouldDestroy) {
+        console.log('[GROUND-FADE] Active projectile on ground, destroying immediately');
+        this.destroyActiveProjectileImmediately(projectile, i);
+        continue;
+      }
+
+      // Manual radius-based collision detection
+      if (!projectile.fadingOut && !projectile.hasCollided && !projectile.shouldDestroy) {
+        this.checkManualCollisionsForProjectile(projectile);
+      }
+
+      // ALWAYS sync ring to sprite position
+      if (ring && projectile) {
+        ring.setPosition(sprite.x, sprite.y);
+      }
+
+      // Keep particle emitter following projectile
+      if (projectile.particles && !projectile.fadingOut) {
+        projectile.particles.setPosition(sprite.x, sprite.y);
+      }
+
+      // Rotate arrow to point in direction of travel during flight
+      if (!projectile.fadingOut && (Math.abs(body.velocity.x) > 1 || Math.abs(body.velocity.y) > 1)) {
         const angle = Math.atan2(body.velocity.y, body.velocity.x);
         sprite.setRotation(angle);
       }
@@ -418,8 +488,12 @@ export class SlingshotScene extends Phaser.Scene {
     this.missesInSequence = 0;
     this.shotsInCurrentSequence = 0;
     
-    // Reset sequence-specific counters (but keep overall streak/bonus tracking)
-    // Note: consecutiveHits, consecutivePerfects, bonusStageActive, streakMultiplier persist across sequences
+    // CRITICAL FIX: Reset ALL streak/bonus counters at sequence start
+    this.consecutivePerfects = 0;
+    this.bonusStageActive = false;
+    this.consecutiveHits = 0;
+    this.streakMultiplier = 1;
+    console.log('[SEQUENCE] Streak counters reset for new sequence');
     
     // Clear any existing targets
     this.targets.forEach(target => this.removeTarget(target));
@@ -741,7 +815,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
-    console.log('[INPUT] PointerDown - gameOver:', this.gameOver, 'roundComplete:', this.roundComplete, 'isDragging:', this.isDragging, 'hasProjectile:', !!this.currentProjectile, 'sequenceActive:', this.sequenceActive, 'powder:', this.powder, 'slingshotEnabled:', this.slingshotEnabled);
+    console.log('[INPUT] PointerDown - gameOver:', this.gameOver, 'roundComplete:', this.roundComplete, 'isDragging:', this.isDragging, 'activeProjectiles:', this.activeProjectiles.length, 'sequenceActive:', this.sequenceActive, 'powder:', this.powder, 'slingshotEnabled:', this.slingshotEnabled);
     
     if (!this.slingshotEnabled) {
       console.log('[INPUT] Blocked: slingshot disabled');
@@ -753,8 +827,9 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
-    if (this.isDragging || this.currentProjectile) {
-      console.log('[INPUT] Blocked: isDragging or currentProjectile exists');
+    // CRITICAL FIX: Remove currentProjectile check to allow concurrent shooting
+    if (this.isDragging) {
+      console.log('[INPUT] Blocked: already dragging');
       return;
     }
 
@@ -769,7 +844,7 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
-    console.log('[INPUT] Creating joypad and projectile');
+    console.log('[INPUT] Creating joypad and projectile (concurrent shooting enabled)');
     const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
     const baseRadius = JOYPAD_BASE_RADIUS;
     const centerX = Phaser.Math.Clamp(pointer.x, baseRadius, this.scale.width - baseRadius);
@@ -1170,20 +1245,28 @@ export class SlingshotScene extends Phaser.Scene {
       return false;
     }
 
+    // CRITICAL: Capture projectile reference for collision callbacks (will be moved to activeProjectiles)
+    const launchedProjectile = this.currentProjectile;
+
     // Set up ground collision with callback to trigger fade immediately
-    this.physics.add.collider(this.currentProjectile.sprite, this.ground, () => {
-      this.onProjectileGroundCollide();
+    this.physics.add.collider(launchedProjectile.sprite, this.ground, () => {
+      // Ground collision - mark for destruction
+      if (!launchedProjectile.fadingOut && !launchedProjectile.shouldDestroy) {
+        console.log('[GROUND-FADE] Ground collision detected for active projectile');
+        launchedProjectile.fadingOut = true;
+        launchedProjectile.shouldDestroy = true;
+      }
     });
 
     // Set up overlap detection for all current targets
     this.targets.forEach((targetData) => {
-      this.physics.add.overlap(this.currentProjectile!.sprite, targetData.sprite, () => {
+      this.physics.add.overlap(launchedProjectile.sprite, targetData.sprite, () => {
         console.log('[COLLISION] Overlap detected with target');
         // CRITICAL: Only set flags here, don't destroy or modify physics
-        if (this.currentProjectile && !this.currentProjectile.hasCollided && !targetData.hit) {
+        if (launchedProjectile && !launchedProjectile.hasCollided && !targetData.hit) {
           console.log('[COLLISION] Setting hasCollided and shouldDestroy flags');
-          this.currentProjectile.hasCollided = true;
-          this.currentProjectile.shouldDestroy = true;
+          launchedProjectile.hasCollided = true;
+          launchedProjectile.shouldDestroy = true;
           // Queue hit handling for next frame (outside collision handler)
           this.time.delayedCall(1, () => {
             console.log('[COLLISION] Processing queued hit');
@@ -1211,7 +1294,16 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.projectileIdleTimer = 0;
 
-    if (this.powder <= 0 && this.currentProjectile && !this.currentProjectile.fadingOut) {
+    // CRITICAL FIX: Add projectile to active array and clear currentProjectile for concurrent shooting
+    if (this.currentProjectile) {
+      this.activeProjectiles.push(this.currentProjectile);
+      console.log('[LAUNCH] Projectile added to active array. Total active:', this.activeProjectiles.length);
+      
+      // Clear currentProjectile immediately so next shot can be prepared
+      this.currentProjectile = undefined;
+    }
+
+    if (this.powder <= 0) {
       this.time.delayedCall(2000, () => {
         if (!this.gameOver) {
           this.handleGameOver();
@@ -1567,8 +1659,8 @@ export class SlingshotScene extends Phaser.Scene {
     const particleLifespan: number = 500 + quality * 200; // 700ms, 900ms, 1100ms, 1300ms
     const particleScale: number = 0.8 + quality * 0.3; // 1.1, 1.4, 1.7, 2.0 scale
 
-    // Create particle emitter at EXACT circle center
-    const particles = this.add.particles(x, y, particleKey, {
+    // CRITICAL FIX: Create emitter at (0, 0) so explode coordinates are absolute
+    const particles = this.add.particles(0, 0, particleKey, {
       speed: { min: particleSpeed * 0.5, max: particleSpeed },
       angle: { min: 0, max: 360 },
       scale: { start: particleScale, end: 0 },
@@ -1580,12 +1672,11 @@ export class SlingshotScene extends Phaser.Scene {
     });
 
     particles.setDepth(150);
-    particles.setPosition(x, y); // Ensure exact positioning
 
-    // Emit particles once at exact position
-    particles.explode(particleCount, x, y);
+    // Emit particles at EXACT absolute position
+    particles.emitParticleAt(x, y, particleCount);
 
-    console.log(`[PARTICLES] Emitted ${particleCount} particles at (${x}, ${y})`);
+    console.log(`[PARTICLES] Emitted ${particleCount} particles at EXACT position (${x}, ${y})`);
 
     // Clean up the emitter after particles finish
     this.time.delayedCall(particleLifespan + 100, () => {
@@ -1843,6 +1934,260 @@ export class SlingshotScene extends Phaser.Scene {
     this.enableSlingshot();
     
     console.log('[CLEANUP] prepareNextShot complete - ready for next shot');
+  }
+
+  private checkManualCollisionsForProjectile(projectile: ProjectileData): void {
+    if (!projectile || projectile.fadingOut || projectile.hasCollided) {
+      return;
+    }
+
+    const projectileX = projectile.sprite.x;
+    const projectileY = projectile.sprite.y;
+    const projectileRadius = 8; // Same as physics body
+
+    // Check distance to each target
+    for (const target of this.targets) {
+      if (target.hit) continue;
+
+      const targetX = target.fixedX;
+      const targetY = target.fixedY;
+      const targetRadius = target.graphic.radius;
+
+      // Calculate distance between centers
+      const dx = projectileX - targetX;
+      const dy = projectileY - targetY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // Check if projectile is within target radius
+      if (distance <= targetRadius + projectileRadius) {
+        console.log('[HIT] Manual collision detected for active projectile! Setting flags for deferred cleanup.');
+        // Set flags but don't handle collision here - defer to next frame
+        projectile.hasCollided = true;
+        projectile.shouldDestroy = true;
+        // Process the hit in the collision handler called via delayedCall
+        this.time.delayedCall(1, () => {
+          this.handleTargetHit(target);
+        });
+        return; // Exit after first hit
+      }
+    }
+  }
+
+  private cleanupActiveProjectile(projectile: ProjectileData, index: number): void {
+    console.log('[CLEANUP] cleanupActiveProjectile called - safe cleanup outside collision handler');
+    
+    try {
+      // Disable physics body safely
+      const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+      if (body) {
+        console.log('[CLEANUP] Disabling physics body');
+        body.stop();
+        body.setVelocity(0, 0);
+        body.setAllowGravity(false);
+        body.enable = false;
+        try {
+          body.world.remove(body);
+        } catch (_e) {
+          // Ignore if already removed
+        }
+      }
+    } catch (error) {
+      console.log('[CLEANUP] Error disabling physics:', error);
+    }
+
+    // Stop and destroy particle emitter
+    if (projectile.particles) {
+      try {
+        projectile.particles.stop();
+        projectile.particles.destroy();
+      } catch (_e) {
+        // Ignore particle cleanup errors
+      }
+    }
+
+    // Destroy sprite and ring
+    try {
+      projectile.sprite.destroy();
+      projectile.ring.destroy();
+    } catch (error) {
+      console.log('[CLEANUP] Error destroying objects:', error);
+    }
+
+    // Remove from active array
+    this.activeProjectiles.splice(index, 1);
+    
+    console.log('[CLEANUP] Active projectile cleanup complete. Remaining active:', this.activeProjectiles.length);
+  }
+
+  private handleOffscreenActiveProjectile(projectile: ProjectileData, index: number): void {
+    console.log('[OFF-SCREEN] handleOffscreenActiveProjectile called');
+    
+    if (projectile.fadingOut || projectile.shouldDestroy) {
+      console.log('[OFF-SCREEN] Projectile already being cleaned up, skipping');
+      return;
+    }
+
+    console.log('[OFF-SCREEN] Starting cleanup sequence - projectile position:', 
+      projectile.sprite.x, projectile.sprite.y);
+
+    try {
+      // Mark as fading out IMMEDIATELY to prevent re-entry
+      projectile.fadingOut = true;
+
+      const sprite = projectile.sprite;
+
+      let missX = this.scale.width / 2;
+      let missY = this.scale.height / 2;
+
+      if (sprite.x < 0) {
+        missX = MISS_EDGE_PADDING;
+      } else if (sprite.x > this.scale.width) {
+        missX = this.scale.width - MISS_EDGE_PADDING;
+      } else {
+        missX = sprite.x;
+      }
+
+      if (sprite.y < 0) {
+        missY = MISS_EDGE_PADDING;
+      } else if (sprite.y > this.scale.height) {
+        missY = this.scale.height - MISS_EDGE_PADDING;
+      } else {
+        missY = sprite.y;
+      }
+
+      const missText = this.add.text(missX, missY, 'MISS', {
+        fontSize: '32px',
+        color: '#e74c3c',
+        fontStyle: 'bold',
+        stroke: '#000000',
+        strokeThickness: 5,
+      });
+      missText.setOrigin(0.5);
+      missText.setDepth(100);
+
+      this.tweens.add({
+        targets: missText,
+        y: missY - 60,
+        alpha: 0,
+        duration: 800,
+        ease: 'Cubic.easeOut',
+        onComplete: () => {
+          try {
+            missText.destroy();
+          } catch (_e) {
+            // Ignore destruction errors
+          }
+        },
+      });
+
+      this.missesInSequence++;
+
+      // Handle miss mechanics (reset streaks/bonus)
+      this.onMiss();
+
+      // Stop physics IMMEDIATELY
+      try {
+        const body = sprite.body as Phaser.Physics.Arcade.Body | undefined;
+        if (body) {
+          console.log('[OFF-SCREEN] Stopping physics body');
+          body.stop();
+          body.setVelocity(0, 0);
+          body.setAllowGravity(false);
+          body.enable = false;
+          body.world.remove(body);
+        }
+      } catch (error) {
+        console.log('[OFF-SCREEN] Error stopping physics:', error);
+      }
+
+      // Stop trail particles immediately
+      if (projectile.particles) {
+        try {
+          projectile.particles.stop();
+          projectile.particles.destroy();
+        } catch (_e) {
+          // Ignore
+        }
+      }
+
+      // Destroy sprite IMMEDIATELY
+      console.log('[OFF-SCREEN] Destroying projectile and ring');
+      try {
+        sprite.destroy();
+        projectile.ring.destroy();
+      } catch (error) {
+        console.log('[OFF-SCREEN] Error destroying objects:', error);
+      }
+
+      // Remove from active array
+      this.activeProjectiles.splice(index, 1);
+      
+      console.log('[OFF-SCREEN] Cleanup complete. Remaining active:', this.activeProjectiles.length);
+    } catch (error) {
+      console.log('[OFF-SCREEN] Fatal error during cleanup:', error);
+      // Failsafe: force cleanup if any error occurs
+      try {
+        this.activeProjectiles.splice(index, 1);
+      } catch (_e2) {
+        // Last resort
+      }
+    }
+  }
+
+  private destroyActiveProjectileImmediately(projectile: ProjectileData, index: number): void {
+    if (!projectile) {
+      console.log('[GROUND-FADE] No projectile to destroy');
+      return;
+    }
+
+    console.log('[GROUND-FADE] Destroying active projectile immediately');
+    
+    // Register as miss
+    this.missesInSequence++;
+
+    // Handle miss mechanics (reset streaks/bonus)
+    this.onMiss();
+
+    try {
+      // Stop physics immediately
+      const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+      if (body) {
+        body.stop();
+        body.setVelocity(0, 0);
+        body.setAllowGravity(false);
+        body.enable = false;
+        try {
+          body.world.remove(body);
+        } catch (_e) {
+          // Ignore if already removed
+        }
+      }
+    } catch (error) {
+      console.log('[GROUND-FADE] Error stopping physics:', error);
+    }
+
+    // Stop trail particles immediately
+    if (projectile.particles) {
+      try {
+        projectile.particles.stop();
+        projectile.particles.destroy();
+      } catch (_e) {
+        // Ignore
+      }
+    }
+
+    // Destroy sprite and ring immediately
+    try {
+      projectile.sprite.destroy();
+      projectile.ring.destroy();
+    } catch (error) {
+      console.log('[GROUND-FADE] Error destroying objects:', error);
+    }
+
+    // Remove from active array
+    this.activeProjectiles.splice(index, 1);
+    
+    console.log('[GROUND-FADE] Immediate destruction complete. Remaining active:', this.activeProjectiles.length);
   }
 
   private createUI(): void {
