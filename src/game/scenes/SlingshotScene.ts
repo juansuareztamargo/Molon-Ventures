@@ -225,21 +225,21 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
       // Manual radius-based collision detection for improved hit detection
-      if (!this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
+      if (this.currentProjectile && !this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
         this.checkManualCollisions();
       }
 
-      if (ring && !this.currentProjectile.fadingOut) {
+      if (ring && this.currentProjectile && !this.currentProjectile.fadingOut) {
         ring.setPosition(sprite.x, sprite.y);
       }
 
       // Keep particle emitter following projectile and rotate arrow to velocity direction
-      if (this.currentProjectile.particles && !this.currentProjectile.fadingOut) {
+      if (this.currentProjectile && this.currentProjectile.particles && !this.currentProjectile.fadingOut) {
         this.currentProjectile.particles.setPosition(sprite.x, sprite.y);
       }
 
       // Rotate arrow to point in direction of travel during flight (ALWAYS update when moving)
-      if (!this.currentProjectile.fadingOut && (Math.abs(body.velocity.x) > 1 || Math.abs(body.velocity.y) > 1)) {
+      if (this.currentProjectile && !this.currentProjectile.fadingOut && (Math.abs(body.velocity.x) > 1 || Math.abs(body.velocity.y) > 1)) {
         const angle = Math.atan2(body.velocity.y, body.velocity.x);
         sprite.setRotation(angle);
       }
@@ -819,12 +819,14 @@ export class SlingshotScene extends Phaser.Scene {
     this.joypad.offsetX = offsetX;
     this.joypad.offsetY = offsetY;
 
-    this.currentProjectile.sprite.setPosition(this.joypad.centerX, this.joypad.groundY);
-    this.currentProjectile.ring.setPosition(this.joypad.centerX, this.joypad.groundY);
+    if (this.currentProjectile) {
+      this.currentProjectile.sprite.setPosition(this.joypad.centerX, this.joypad.groundY);
+      this.currentProjectile.ring.setPosition(this.joypad.centerX, this.joypad.groundY);
 
-    // Rotate arrow to point in drag direction (opposite of offset)
-    const aimAngle = Math.atan2(-offsetY, -offsetX);
-    this.currentProjectile.sprite.setRotation(aimAngle);
+      // Rotate arrow to point in drag direction (opposite of offset)
+      const aimAngle = Math.atan2(-offsetY, -offsetX);
+      this.currentProjectile.sprite.setRotation(aimAngle);
+    }
 
     this.joypad.powerLine.clear();
     this.joypad.powerLine.lineStyle(4, COLORS.PRIMARY, 0.6);
@@ -1049,6 +1051,10 @@ export class SlingshotScene extends Phaser.Scene {
       velocityY = -this.joypad.offsetY * velocityMultiplier;
     }
 
+    if (!this.currentProjectile) {
+      return false;
+    }
+
     const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(true);
     body.setVelocity(velocityX, velocityY);
@@ -1064,6 +1070,10 @@ export class SlingshotScene extends Phaser.Scene {
         this.currentProjectile.sprite.y
       );
       this.currentProjectile.particles.start();
+    }
+
+    if (!this.currentProjectile) {
+      return false;
     }
 
     this.physics.add.collider(this.currentProjectile.sprite, this.ground);
@@ -1093,7 +1103,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.projectileIdleTimer = 0;
 
-    if (this.powder <= 0 && !this.currentProjectile.fadingOut) {
+    if (this.powder <= 0 && this.currentProjectile && !this.currentProjectile.fadingOut) {
       this.time.delayedCall(2000, () => {
         if (!this.gameOver) {
           this.handleGameOver();
@@ -1381,9 +1391,14 @@ export class SlingshotScene extends Phaser.Scene {
     console.log('[GROUND-FADE] Starting fade animation for grounded projectile');
     this.currentProjectile.fadingOut = true;
 
+    // Capture references before any async operations
+    const projectileSprite = this.currentProjectile.sprite;
+    const projectileRing = this.currentProjectile.ring;
+    const projectileParticles = this.currentProjectile.particles;
+
     // Stop physics immediately to prevent any movement during fade
     try {
-      const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+      const body = projectileSprite.body as Phaser.Physics.Arcade.Body | undefined;
       if (body) {
         console.log('[GROUND-FADE] Stopping physics body');
         body.stop();
@@ -1396,9 +1411,9 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     // Stop particle emission
-    if (this.currentProjectile.particles) {
+    if (projectileParticles) {
       try {
-        this.currentProjectile.particles.stop();
+        projectileParticles.stop();
         console.log('[GROUND-FADE] Stopped particle emission');
       } catch (error) {
         console.log('[GROUND-FADE] Error stopping particles:', error);
@@ -1407,7 +1422,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     console.log('[GROUND-FADE] Creating fade tween (800ms)');
     this.tweens.add({
-      targets: [this.currentProjectile.sprite, this.currentProjectile.ring],
+      targets: [projectileSprite, projectileRing],
       alpha: 0,
       duration: 800,
       ease: 'Linear',
