@@ -39,6 +39,7 @@ interface ProjectileData {
   targetColor: number;
   fadingOut: boolean;
   hasCollided: boolean;
+  shouldDestroy: boolean;
   particles?: Phaser.GameObjects.Particles.ParticleEmitter;
 }
 
@@ -177,6 +178,19 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   update(_time: number, delta: number): void {
+    // Handle deferred projectile destruction (CRITICAL: outside collision handlers)
+    if (this.currentProjectile && this.currentProjectile.shouldDestroy && !this.currentProjectile.fadingOut) {
+      console.log('[UPDATE] Processing deferred projectile destruction');
+      this.currentProjectile.shouldDestroy = false; // Reset flag
+      // Defer cleanup to next frame to ensure we're fully outside collision handler
+      this.time.delayedCall(1, () => {
+        if (this.currentProjectile) {
+          console.log('[UPDATE] Executing deferred cleanup');
+          this.cleanupProjectileAfterHit();
+        }
+      });
+    }
+
     // Update projectile lifecycle even when round/game is complete (for continuous rotation and cleanup)
     if (this.currentProjectile && !this.isDragging) {
       const sprite = this.currentProjectile.sprite;
@@ -196,13 +210,14 @@ export class SlingshotScene extends Phaser.Scene {
       const isOnGround = sprite.y > this.scale.height - GAME_SETTINGS.GROUND_HEIGHT - 30;
 
       // Handle off-screen projectiles even after sequence completes
-      if (isOffscreen && !this.currentProjectile.fadingOut) {
+      if (isOffscreen && !this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
         console.log('[OFF-SCREEN] Projectile detected off-screen, cleaning up...');
         this.handleOffscreenProjectile();
-      } else if (hasLowVelocity && isOnGround && !this.currentProjectile.fadingOut) {
+      } else if (hasLowVelocity && isOnGround && !this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
         this.projectileIdleTimer += delta;
 
         if (this.projectileIdleTimer >= GAME_SETTINGS.PROJECTILE_IDLE_TIME) {
+          console.log('[GROUND-FADE] Projectile idle on ground, starting fade animation');
           this.fadeOutProjectile();
         }
       } else {
@@ -210,7 +225,7 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
       // Manual radius-based collision detection for improved hit detection
-      if (!this.currentProjectile.fadingOut) {
+      if (!this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
         this.checkManualCollisions();
       }
 
@@ -270,8 +285,14 @@ export class SlingshotScene extends Phaser.Scene {
 
       // Check if projectile is within target radius
       if (distance <= targetRadius + projectileRadius) {
-        console.log('[HIT] Manual collision detected!');
-        this.handleTargetHit(target);
+        console.log('[HIT] Manual collision detected! Setting flags for deferred cleanup.');
+        // Set flags but don't handle collision here - defer to next frame
+        this.currentProjectile.hasCollided = true;
+        this.currentProjectile.shouldDestroy = true;
+        // Process the hit in the collision handler called via delayedCall
+        this.time.delayedCall(1, () => {
+          this.handleTargetHit(target);
+        });
         return; // Exit after first hit
       }
     }
@@ -462,11 +483,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.targets.push(targetData);
 
-    if (this.currentProjectile) {
-      this.physics.add.overlap(this.currentProjectile.sprite, sprite, () => {
-        this.handleTargetHit(targetData);
-      });
-    }
+    // DO NOT set up overlap here - it will be handled in launchProjectile()
+    // This prevents duplicate collision handlers which cause freezes
   }
 
   private updateTargets(): void {
@@ -631,6 +649,7 @@ export class SlingshotScene extends Phaser.Scene {
       targetColor: TARGET_COLORS.RED,
       fadingOut: false,
       hasCollided: false,
+      shouldDestroy: false,
       particles,
     };
   }
@@ -1049,12 +1068,20 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.physics.add.collider(this.currentProjectile.sprite, this.ground);
 
+    // Set up overlap detection for all current targets
     this.targets.forEach((targetData) => {
       this.physics.add.overlap(this.currentProjectile!.sprite, targetData.sprite, () => {
-        // Prevent duplicate collision handling
-        if (this.currentProjectile && !this.currentProjectile.hasCollided) {
+        console.log('[COLLISION] Overlap detected with target');
+        // CRITICAL: Only set flags here, don't destroy or modify physics
+        if (this.currentProjectile && !this.currentProjectile.hasCollided && !targetData.hit) {
+          console.log('[COLLISION] Setting hasCollided and shouldDestroy flags');
           this.currentProjectile.hasCollided = true;
-          this.handleTargetHit(targetData);
+          this.currentProjectile.shouldDestroy = true;
+          // Queue hit handling for next frame (outside collision handler)
+          this.time.delayedCall(1, () => {
+            console.log('[COLLISION] Processing queued hit');
+            this.handleTargetHit(targetData);
+          });
         }
       });
     });
@@ -1078,6 +1105,8 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private handleOffscreenProjectile(): void {
+    console.log('[OFF-SCREEN] handleOffscreenProjectile called');
+    
     if (!this.currentProjectile) {
       console.log('[OFF-SCREEN] No projectile to clean up');
       return;
@@ -1086,11 +1115,17 @@ export class SlingshotScene extends Phaser.Scene {
     const projectile = this.currentProjectile;
 
     if (projectile.fadingOut) {
-      console.log('[OFF-SCREEN] Projectile already fading out');
+      console.log('[OFF-SCREEN] Projectile already fading out, skipping');
       return;
     }
 
-    console.log('[OFF-SCREEN] Starting cleanup sequence');
+    if (projectile.shouldDestroy) {
+      console.log('[OFF-SCREEN] Projectile already marked for destruction, skipping');
+      return;
+    }
+
+    console.log('[OFF-SCREEN] Starting cleanup sequence - projectile position:', 
+      projectile.sprite.x, projectile.sprite.y);
 
     try {
       // Mark as fading out IMMEDIATELY to prevent re-entry
@@ -1204,22 +1239,13 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private handleTargetHit(targetData: TargetData): void {
-    if (targetData.hit) return;
+    if (targetData.hit) {
+      console.log('[HIT] Target already hit, skipping');
+      return;
+    }
     targetData.hit = true;
 
-    console.log('[HIT] Target hit detected');
-
-    // Immediately disable projectile physics to prevent further interactions
-    if (this.currentProjectile) {
-      try {
-        const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
-        if (body) {
-          body.enable = false;
-        }
-      } catch (_e) {
-        // Ignore
-      }
-    }
+    console.log('[HIT] Processing target hit');
 
     this.targetsRemainingInRound--;
     this.hitsInSequence++;
@@ -1295,15 +1321,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.removeTarget(targetData);
     this.updatePowderText();
     
-    // Immediately destroy projectile on hit
-    console.log('[HIT] Cleaning up projectile');
-    this.prepareNextShot();
-    
-    // Clear joypad UI and reset drag state to allow next shot
-    this.destroyJoypad();
-    this.resetDragState();
-    
-    console.log('[HIT] Cleanup complete, input should be re-enabled');
+    console.log('[HIT] Target processing complete, projectile cleanup will be handled by update loop');
   }
 
   private removeTarget(targetData: TargetData): void {
@@ -1355,47 +1373,119 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private fadeOutProjectile(): void {
-    if (!this.currentProjectile || this.currentProjectile.fadingOut) return;
+    if (!this.currentProjectile || this.currentProjectile.fadingOut) {
+      console.log('[GROUND-FADE] Already fading or no projectile');
+      return;
+    }
 
+    console.log('[GROUND-FADE] Starting fade animation for grounded projectile');
     this.currentProjectile.fadingOut = true;
 
     // Stop physics immediately to prevent any movement during fade
     try {
       const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
       if (body) {
+        console.log('[GROUND-FADE] Stopping physics body');
         body.stop();
         body.setVelocity(0, 0);
         body.setAllowGravity(false);
         body.enable = false;
       }
-    } catch (_e) {
-      // Ignore
+    } catch (error) {
+      console.log('[GROUND-FADE] Error stopping physics:', error);
     }
 
     // Stop particle emission
     if (this.currentProjectile.particles) {
       try {
         this.currentProjectile.particles.stop();
-      } catch (_e) {
-        // Ignore
+        console.log('[GROUND-FADE] Stopped particle emission');
+      } catch (error) {
+        console.log('[GROUND-FADE] Error stopping particles:', error);
       }
     }
 
+    console.log('[GROUND-FADE] Creating fade tween (800ms)');
     this.tweens.add({
       targets: [this.currentProjectile.sprite, this.currentProjectile.ring],
       alpha: 0,
       duration: 800,
       ease: 'Linear',
+      onStart: () => {
+        console.log('[GROUND-FADE] Fade tween started');
+      },
       onComplete: () => {
+        console.log('[GROUND-FADE] Fade tween complete, cleaning up');
         try {
           this.prepareNextShot();
-        } catch (_e) {
+          console.log('[GROUND-FADE] prepareNextShot called successfully');
+        } catch (error) {
+          console.log('[GROUND-FADE] Error in prepareNextShot:', error);
           // Force cleanup if tween completion fails
           this.currentProjectile = undefined;
         }
         this.destroyJoypad();
       },
     });
+  }
+
+  private cleanupProjectileAfterHit(): void {
+    console.log('[CLEANUP] cleanupProjectileAfterHit called - safe cleanup outside collision handler');
+    
+    if (!this.currentProjectile) {
+      console.log('[CLEANUP] No projectile to clean up');
+      return;
+    }
+
+    const projectile = this.currentProjectile;
+
+    try {
+      // Disable physics body safely
+      const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+      if (body) {
+        console.log('[CLEANUP] Disabling physics body');
+        body.stop();
+        body.setVelocity(0, 0);
+        body.setAllowGravity(false);
+        body.enable = false;
+        try {
+          body.world.remove(body);
+        } catch (_e) {
+          // Ignore if already removed
+        }
+      }
+    } catch (error) {
+      console.log('[CLEANUP] Error disabling physics:', error);
+    }
+
+    // Stop and destroy particle emitter
+    if (projectile.particles) {
+      try {
+        projectile.particles.stop();
+        projectile.particles.destroy();
+      } catch (_e) {
+        // Ignore particle cleanup errors
+      }
+    }
+
+    // Destroy sprite and ring
+    try {
+      projectile.sprite.destroy();
+      projectile.ring.destroy();
+    } catch (error) {
+      console.log('[CLEANUP] Error destroying objects:', error);
+    }
+
+    // Clear projectile reference
+    this.currentProjectile = undefined;
+    
+    // Reset state to allow next shot
+    this.projectileIdleTimer = 0;
+    this.snappedVelocity = undefined;
+    this.destroyJoypad();
+    this.resetDragState();
+    
+    console.log('[CLEANUP] Cleanup complete, input re-enabled for next shot');
   }
 
   private prepareNextShot(): void {
