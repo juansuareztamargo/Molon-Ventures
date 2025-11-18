@@ -53,8 +53,10 @@ export class SlingshotScene extends Phaser.Scene {
   private bestHit: number = 0;
 
   private roundText!: Phaser.GameObjects.Text;
+  private powderHudContainer!: Phaser.GameObjects.Container;
   private powderLabel!: Phaser.GameObjects.Text;
   private powderValue!: Phaser.GameObjects.Text;
+  private transactionText!: Phaser.GameObjects.Text;
   private powderText!: Phaser.GameObjects.Text; // Keep for backward compatibility
   private instructionsText!: Phaser.GameObjects.Text;
   private sequenceProgressText!: Phaser.GameObjects.Text;
@@ -95,8 +97,12 @@ export class SlingshotScene extends Phaser.Scene {
   
   // Powder animation tracking
   private powderAnimationTween?: Phaser.Tweens.Tween;
+  private transactionTween?: Phaser.Tweens.Tween;
   private powderCounterX: number = 20;
   private powderCounterY: number = 20;
+  private transactionQueue: Array<{ amount: number; type: 'cost' | 'reward' }> = [];
+  private transactionActive: boolean = false;
+  private displayedPowderValue: number = GAME_SETTINGS.INITIAL_POWDER;
   
   // Bonus mode visual tracking
   private bonusModeAnimation?: Phaser.Time.TimerEvent;
@@ -127,6 +133,10 @@ export class SlingshotScene extends Phaser.Scene {
     if (this.tweens) {
       this.tweens.killAll();
     }
+
+    // Clean up transaction queue and tweens
+    this.clearPowderTransactionFeedback();
+    this.displayedPowderValue = GAME_SETTINGS.INITIAL_POWDER;
 
     // Clean up bonus mode animations
     if (this.bonusModeAnimation) {
@@ -547,6 +557,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.hitsInSequence = 0;
     this.missesInSequence = 0;
     this.shotsInCurrentSequence = 0;
+    
+    // Clear any pending transaction feedback
+    this.clearPowderTransactionFeedback();
     
     // BONUS MODE PERSISTENCE: Do NOT reset bonus counters at sequence start
     // Only reset sequence-specific counters, let bonus mode persist across sequences
@@ -2708,45 +2721,55 @@ export class SlingshotScene extends Phaser.Scene {
     this.roundText.setOrigin(0.5, 0);
     this.roundText.setDepth(100);
 
-    // Split powder counter into separate label and value
-    this.powderLabel = this.add.text(
-      20,
-      20,
-      'POWDER:',
-      {
-        fontSize: '24px',
-        color: '#ffffff',
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 2
-      }
-    ).setOrigin(0, 0);
-    this.powderLabel.setDepth(100);
+    // Structured powder HUD container (label, value, transaction)
+    const powderHudPaddingX = Math.max(20, width * 0.02);
+    const powderHudPaddingY = Math.max(24, height * 0.03);
+    this.powderCounterX = powderHudPaddingX;
+    this.powderCounterY = powderHudPaddingY;
 
-    this.powderValue = this.add.text(
-      100,
-      20,
-      this.powder.toString(),
-      {
-        fontSize: '28px',
-        color: '#FFD700',
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 2
-      }
-    ).setOrigin(0, 0);
-    this.powderValue.setDepth(100);
+    this.powderHudContainer = this.add.container(powderHudPaddingX, powderHudPaddingY);
+    this.powderHudContainer.setDepth(100);
+
+    this.powderLabel = this.add.text(0, 0, 'POWDER', {
+      fontSize: '24px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 2
+    }).setOrigin(0, 0.5);
+
+    this.powderValue = this.add.text(0, 0, this.powder.toString(), {
+      fontSize: '28px',
+      color: '#FFD700',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 2
+    }).setOrigin(0, 0.5);
+
+    this.transactionText = this.add.text(0, 0, '', {
+      fontSize: '20px',
+      color: '#ffffff',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 2
+    }).setOrigin(0, 0.5);
+    this.transactionText.setVisible(false);
+    this.transactionText.setAlpha(0);
+
+    this.powderHudContainer.add([this.powderLabel, this.powderValue, this.transactionText]);
 
     // Keep original powderText for backward compatibility with existing animation methods
     this.powderText = this.add.text(
-      20,
-      20,
+      powderHudPadding,
+      powderHudBaseline - 14,
       `POWDER: ${this.powder}`,
       createTextStyle('28px', '#FFD700')
     );
     this.powderText.setOrigin(0, 0);
     this.powderText.setDepth(90); // Behind the new elements
     this.powderText.setVisible(false); // Hide the original
+
+    this.layoutPowderHud();
 
     this.sequenceProgressText = this.add.text(
       width - 20,
@@ -2793,6 +2816,23 @@ export class SlingshotScene extends Phaser.Scene {
     
     // Also update the hidden original for backward compatibility
     this.powderText.setText(`POWDER: ${this.powder}`);
+
+    this.layoutPowderHud();
+  }
+
+  private layoutPowderHud(): void {
+    if (!this.powderLabel || !this.powderValue || !this.transactionText) {
+      return;
+    }
+
+    const labelWidth = this.powderLabel.width;
+    const valueWidth = this.powderValue.width;
+    const labelValueSpacing = 8;
+    const valueTransactionSpacing = 12;
+
+    this.powderLabel.setPosition(0, 0);
+    this.powderValue.setPosition(labelWidth + labelValueSpacing, 0);
+    this.transactionText.setPosition(labelWidth + labelValueSpacing + valueWidth + valueTransactionSpacing, 0);
   }
 
   private animatePowderCounter(oldValue: number, newValue: number, isReward: boolean): void {
@@ -2813,6 +2853,7 @@ export class SlingshotScene extends Phaser.Scene {
         this.powderValue.setText(displayValue.toString());
         // Also update hidden original for compatibility
         this.powderText.setText(`POWDER: ${displayValue}`);
+        this.layoutPowderHud();
       }
     });
 
@@ -2861,33 +2902,101 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private displayPowderTransactionFeedback(amount: number, isReward: boolean): void {
+    const type = isReward ? 'reward' : 'cost';
+    console.log(`[POWDER] ${isReward ? 'Reward' : 'Shot cost'} ${isReward ? '+' : '-'}${Math.abs(amount)}`);
+
+    if (this.transactionActive) {
+      this.transactionQueue.push({ amount, type });
+      return;
+    }
+
+    this.showTransactionText(amount, type);
+  }
+
+  private showTransactionText(amount: number, type: 'cost' | 'reward'): void {
+    if (!this.transactionText) {
+      return;
+    }
+
+    this.transactionActive = true;
+    const isReward = type === 'reward';
     const color = isReward ? '#00ff00' : '#ff0000';
     const sign = isReward ? '+' : '-';
-    const transactionText = `${sign}${Math.abs(amount)}`;
+    const displayText = `${sign}${Math.abs(amount)}`;
 
-    const transactionDisplay = this.add.text(
-      this.powderCounterX + 120,
-      this.powderCounterY,
-      transactionText,
-      {
-        fontSize: '28px',
-        color: color,
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 2
-      }
-    ).setOrigin(0.5, 0.5);
-    transactionDisplay.setDepth(100);
+    this.transactionText.setText(displayText);
+    this.transactionText.setColor(color);
+    this.transactionText.setVisible(true);
+    this.transactionText.setAlpha(1);
+    this.layoutPowderHud();
 
-    this.tweens.add({
-      targets: transactionDisplay,
+    if (this.transactionTween) {
+      this.transactionTween.destroy();
+    }
+
+    this.transactionTween = this.tweens.add({
+      targets: this.transactionText,
       alpha: { from: 1, to: 0 },
-      duration: 1500,
-      delay: 300,
+      duration: 600,
+      delay: 400,
+      ease: 'Cubic.easeOut',
       onComplete: () => {
-        transactionDisplay.destroy();
+        if (this.transactionText) {
+          this.transactionText.setVisible(false);
+          this.transactionText.setText('');
+        }
+        this.transactionActive = false;
+        this.processNextTransaction();
       }
     });
+  }
+
+  private processNextTransaction(): void {
+    if (this.transactionQueue.length > 0) {
+      const next = this.transactionQueue.shift();
+      if (next) {
+        this.showTransactionText(next.amount, next.type);
+      }
+    }
+  }
+
+  private clearPowderTransactionFeedback(): void {
+    this.transactionQueue = [];
+    this.transactionActive = false;
+    if (this.transactionTween) {
+      this.transactionTween.stop();
+      this.transactionTween = undefined;
+    }
+
+    if (this.transactionText) {
+      this.transactionText.setVisible(false);
+      this.transactionText.setAlpha(0);
+      this.transactionText.setText('');
+    }
+  }
+
+  private updatePowderDisplay(amount?: number, type?: 'cost' | 'reward'): void {
+    const newValue = this.powder;
+    const oldValue = this.displayedPowderValue;
+
+    if (!this.powderValue || !this.powderText) {
+      this.displayedPowderValue = newValue;
+      return;
+    }
+
+    if (oldValue !== newValue) {
+      this.animatePowderCounter(oldValue, newValue, type === 'reward');
+    } else {
+      this.powderValue.setText(newValue.toString());
+      this.powderText.setText(`POWDER: ${newValue}`);
+      this.layoutPowderHud();
+    }
+
+    this.displayedPowderValue = newValue;
+
+    if (amount && type) {
+      this.displayPowderTransactionFeedback(amount, type === 'reward');
+    }
   }
 
   private activateBonusModeVisual(): void {
@@ -3142,6 +3251,9 @@ export class SlingshotScene extends Phaser.Scene {
         this.missesInSequence = 0;
         this.shotsInCurrentSequence = 0;
         
+        // Clear pending transaction feedback
+        this.clearPowderTransactionFeedback();
+        
         // Clean up any existing projectiles and joypad
         this.prepareNextShot();
         this.destroyJoypad();
@@ -3244,6 +3356,8 @@ export class SlingshotScene extends Phaser.Scene {
 
   private triggerGameOver(): void {
     if (this.gameOver) return;
+    
+    this.clearPowderTransactionFeedback();
     
     // Stop all active projectiles
     this.activeProjectiles.forEach((projectile) => {
