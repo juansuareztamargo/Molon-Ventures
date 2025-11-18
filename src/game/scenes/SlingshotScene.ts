@@ -224,6 +224,11 @@ export class SlingshotScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
 
+    // DIAGNOSTIC: Log ground configuration
+    console.log(`[GROUND-DIAGNOSTIC] GAME_SETTINGS.GROUND_HEIGHT: ${GAME_SETTINGS.GROUND_HEIGHT}`);
+    console.log(`[GROUND-DIAGNOSTIC] Screen height: ${height}`);
+    console.log(`[GROUND-DIAGNOSTIC] Calculated ground level: ${height - GAME_SETTINGS.GROUND_HEIGHT}`);
+
     this.ground = this.add.rectangle(
       width / 2,
       height - GAME_SETTINGS.GROUND_HEIGHT / 2,
@@ -252,18 +257,49 @@ export class SlingshotScene extends Phaser.Scene {
       });
     }
 
-    // Enhanced ground detection for current projectile (ONLY when not being aimed)
-    if (this.currentProjectile && this.currentProjectile.sprite && !this.currentProjectile.shouldDestroy && !this.isDragging) {
-      const groundLevel = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
-      const projectileY = this.currentProjectile.sprite.y;
+    // DIAGNOSTIC: Check ground collision for current projectile
+    if (this.currentProjectile && this.currentProjectile.sprite) {
+      const groundLevel = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT
+      const projectileY = this.currentProjectile.sprite.y
+      const isAboveGround = projectileY < groundLevel
       
-      // Debug logging for ground detection
-      console.log(`[GROUND-CHECK] Projectile Y: ${projectileY}, Ground Level: ${groundLevel}, Distance to ground: ${projectileY - groundLevel}`);
+      console.log(`[GROUND-DIAGNOSTIC] currentProjectile exists`)
+      console.log(`  - Y: ${projectileY.toFixed(0)}, Ground: ${groundLevel.toFixed(0)}, Above: ${isAboveGround}`)
+      console.log(`  - isDragging: ${this.isDragging}`)
+      console.log(`  - shouldDestroy: ${this.currentProjectile.shouldDestroy}`)
+      console.log(`  - fadingOut: ${this.currentProjectile.fadingOut}`)
+      console.log(`  - sprite destroyed: ${this.currentProjectile.sprite?.active === false}`)
       
-      // Check if projectile has hit or gone below ground level
-      if (projectileY >= groundLevel) {
-        console.log('[GROUND-IMPACT] Ground collision detected! Destroying projectile immediately');
-        this.destroyProjectileOnGroundImpact();
+      if (!isAboveGround && !this.isDragging && !this.currentProjectile.shouldDestroy) {
+        console.log(`[GROUND-DIAGNOSTIC] CONDITIONS MET FOR DESTRUCTION!`)
+        this.destroyProjectileOnGroundImpact()
+      } else if (!isAboveGround) {
+        console.log(`[GROUND-DIAGNOSTIC] NOT destroying because:`)
+        if (this.isDragging) console.log(`    - isDragging: true`)
+        if (this.currentProjectile.shouldDestroy) console.log(`    - shouldDestroy: true`)
+      }
+    } else {
+      if (this.currentProjectile) {
+        console.log(`[GROUND-DIAGNOSTIC] currentProjectile exists but no sprite!`)
+      }
+    }
+
+    // DIAGNOSTIC: Check all active projectiles
+    for (let i = this.activeProjectiles.length - 1; i >= 0; i--) {
+      const projectile = this.activeProjectiles[i]
+      if (projectile && projectile.sprite) {
+        const groundLevel = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT
+        const projectileY = projectile.sprite.y
+        const isAboveGround = projectileY < groundLevel
+        
+        console.log(`[GROUND-DIAGNOSTIC] activeProjectile[${i}]`)
+        console.log(`  - Y: ${projectileY.toFixed(0)}, Ground: ${groundLevel.toFixed(0)}, Above: ${isAboveGround}`)
+        console.log(`  - fadingOut: ${projectile.fadingOut}, shouldDestroy: ${projectile.shouldDestroy}`)
+        
+        if (!isAboveGround && !projectile.fadingOut && !projectile.shouldDestroy) {
+          console.log(`[GROUND-DIAGNOSTIC] CONDITIONS MET FOR DESTRUCTION!`)
+          this.destroyActiveProjectileOnGroundImpact(projectile, i)
+        }
       }
     }
 
@@ -328,22 +364,6 @@ export class SlingshotScene extends Phaser.Scene {
       const sprite = projectile.sprite;
       const ring = projectile.ring;
       const body = sprite.body as Phaser.Physics.Arcade.Body;
-
-      // Enhanced ground detection for active projectiles
-      if (!projectile.shouldDestroy) {
-        const groundLevel = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
-        const projectileY = projectile.sprite.y;
-        
-        // Debug logging for active projectile ground detection
-        console.log(`[GROUND-CHECK] Active Projectile Y: ${projectileY}, Ground Level: ${groundLevel}, Distance to ground: ${projectileY - groundLevel}`);
-        
-        // Check if active projectile has hit or gone below ground level
-        if (projectileY >= groundLevel) {
-          console.log('[GROUND-IMPACT] Ground collision detected for active projectile! Destroying immediately');
-          this.destroyActiveProjectileOnGroundImpact(projectile, i);
-          continue;
-        }
-      }
 
       // Check if projectile should be destroyed
       if (projectile.shouldDestroy && !projectile.fadingOut) {
@@ -1731,159 +1751,223 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private destroyProjectileOnGroundImpact(): void {
+    console.log(`[GROUND-DIAGNOSTIC] destroyProjectileOnGroundImpact() CALLED`);
+    
     if (!this.currentProjectile) {
-      console.log('[GROUND-IMPACT] No projectile to destroy');
+      console.log(`[GROUND-DIAGNOSTIC] ABORT: currentProjectile is null`);
       return;
     }
-    
-    console.log('[GROUND-IMPACT] Starting fade animation on ground impact');
     
     const projectile = this.currentProjectile;
     
     if (projectile.fadingOut) {
-      console.log('[GROUND-IMPACT] Already fading out, skipping');
+      console.log(`[GROUND-DIAGNOSTIC] ABORT: projectile already fading out`);
       return;
     }
     
-    projectile.fadingOut = true;
-    
-    // Register as miss immediately
-    this.missesInSequence++;
-    
-    // Handle miss mechanics (reset streaks/bonus)
-    this.onMiss();
-    
-    // Create particle burst at impact location
-    const impactX = projectile.sprite.x;
-    const impactY = projectile.sprite.y;
-    this.createGroundImpactParticles(impactX, impactY);
-    
-    // Stop physics immediately
     try {
-      const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
-      if (body) {
-        body.stop();
-        body.setVelocity(0, 0);
-        body.setAllowGravity(false);
-        body.enable = false;
+      console.log(`[GROUND-DIAGNOSTIC] Setting fadingOut = true`);
+      projectile.fadingOut = true;
+      
+      if (projectile.sprite) {
+        console.log(`[GROUND-DIAGNOSTIC] Starting fade at (${projectile.sprite.x.toFixed(0)}, ${projectile.sprite.y.toFixed(0)})`);
+      }
+      
+      // Register as miss immediately
+      this.missesInSequence++;
+      this.onMiss();
+      
+      // Create particle burst at impact location
+      if (projectile.sprite) {
+        const impactX = projectile.sprite.x;
+        const impactY = projectile.sprite.y;
+        this.createGroundImpactParticles(impactX, impactY);
+      }
+      
+      // Stop physics immediately
+      if (projectile.sprite) {
         try {
-          body.world.remove(body);
-        } catch (_e) {
-          // Ignore if already removed
+          const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+          if (body) {
+            console.log(`[GROUND-DIAGNOSTIC] Stopping physics body`);
+            body.stop();
+            body.setVelocity(0, 0);
+            body.setAllowGravity(false);
+            body.enable = false;
+            try {
+              body.world.remove(body);
+            } catch (_e) {
+              // Ignore if already removed
+            }
+          }
+        } catch (error) {
+          console.log(`[GROUND-DIAGNOSTIC] Error stopping physics:`, error);
         }
       }
+      
+      // Stop trail particles
+      if (projectile.particles) {
+        console.log(`[GROUND-DIAGNOSTIC] Stopping particles`);
+        try {
+          projectile.particles.stop();
+        } catch (_e) {
+          // Ignore
+        }
+      }
+      
+      // Fade out sprite and ring over 400ms
+      if (projectile.sprite) {
+        console.log(`[GROUND-DIAGNOSTIC] Starting 400ms fade animation`);
+        this.tweens.add({
+          targets: projectile.sprite,
+          alpha: { from: 1, to: 0 },
+          duration: 400,
+          ease: 'Linear',
+          onComplete: () => {
+            console.log(`[GROUND-DIAGNOSTIC] Fade animation complete, calling completeProjectileDestruction()`);
+            this.completeProjectileDestruction();
+          }
+        });
+      }
+      
+      // Also fade ring
+      if (projectile.ring) {
+        this.tweens.add({
+          targets: projectile.ring,
+          alpha: { from: 1, to: 0 },
+          duration: 400,
+          ease: 'Linear'
+        });
+      }
+      
+      console.log(`[GROUND-DIAGNOSTIC] destroyProjectileOnGroundImpact() setup complete`);
+      
     } catch (error) {
-      console.log('[GROUND-FADE] Error stopping physics:', error);
-    }
-    
-    // Stop trail particles
-    if (projectile.particles) {
+      console.error('[GROUND-DIAGNOSTIC] ERROR in destroyProjectileOnGroundImpact:', error);
+      console.error(error.stack);
+      // Failsafe cleanup
       try {
-        projectile.particles.stop();
-      } catch (_e) {
-        // Ignore
+        if (projectile.sprite) projectile.sprite.destroy();
+        if (projectile.ring) projectile.ring.destroy();
+        if (projectile.particles) {
+          projectile.particles.stop();
+          projectile.particles.destroy();
+        }
+        this.currentProjectile = undefined;
+        this.slingshotEnabled = true;
+      } catch (_e2) {
+        // Last resort
       }
     }
-    
-    // Fade out sprite and ring over 400ms
-    this.tweens.add({
-      targets: projectile.sprite,
-      alpha: { from: 1, to: 0 },
-      duration: 400,
-      ease: 'Linear',
-      onComplete: () => {
-        this.completeProjectileDestruction();
-      }
-    });
-    
-    // Also fade ring
-    if (projectile.ring) {
-      this.tweens.add({
-        targets: projectile.ring,
-        alpha: { from: 1, to: 0 },
-        duration: 400,
-        ease: 'Linear'
-      });
-    }
-    
-    console.log('[GROUND-IMPACT] Fade animation started (400ms)');
   }
 
   private destroyActiveProjectileOnGroundImpact(projectile: ProjectileData, index: number): void {
+    console.log(`[GROUND-DIAGNOSTIC] destroyActiveProjectileOnGroundImpact() CALLED for index ${index}`);
+    
     if (!projectile) {
-      console.log('[GROUND-IMPACT] No active projectile to destroy');
+      console.log(`[GROUND-DIAGNOSTIC] ABORT: projectile is null`);
       return;
     }
-    
-    console.log('[GROUND-IMPACT] Starting fade animation for active projectile on ground impact');
     
     if (projectile.fadingOut) {
-      console.log('[GROUND-IMPACT] Active projectile already fading out, skipping');
+      console.log(`[GROUND-DIAGNOSTIC] ABORT: active projectile already fading out`);
       return;
     }
     
-    projectile.fadingOut = true;
-    
-    // Register as miss immediately
-    this.missesInSequence++;
-    
-    // Handle miss mechanics (reset streaks/bonus)
-    this.onMiss();
-    
-    // Create particle burst at impact location
-    const impactX = projectile.sprite.x;
-    const impactY = projectile.sprite.y;
-    this.createGroundImpactParticles(impactX, impactY);
-    
-    // Stop physics immediately
     try {
-      const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
-      if (body) {
-        body.stop();
-        body.setVelocity(0, 0);
-        body.setAllowGravity(false);
-        body.enable = false;
+      console.log(`[GROUND-DIAGNOSTIC] Setting active projectile fadingOut = true`);
+      projectile.fadingOut = true;
+      
+      if (projectile.sprite) {
+        console.log(`[GROUND-DIAGNOSTIC] Starting fade for active projectile at (${projectile.sprite.x.toFixed(0)}, ${projectile.sprite.y.toFixed(0)})`);
+      }
+      
+      // Register as miss immediately
+      this.missesInSequence++;
+      this.onMiss();
+      
+      // Create particle burst at impact location
+      if (projectile.sprite) {
+        const impactX = projectile.sprite.x;
+        const impactY = projectile.sprite.y;
+        this.createGroundImpactParticles(impactX, impactY);
+      }
+      
+      // Stop physics immediately
+      if (projectile.sprite) {
         try {
-          body.world.remove(body);
-        } catch (_e) {
-          // Ignore if already removed
+          const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
+          if (body) {
+            console.log(`[GROUND-DIAGNOSTIC] Stopping active projectile physics body`);
+            body.stop();
+            body.setVelocity(0, 0);
+            body.setAllowGravity(false);
+            body.enable = false;
+            try {
+              body.world.remove(body);
+            } catch (_e) {
+              // Ignore if already removed
+            }
+          }
+        } catch (error) {
+          console.log(`[GROUND-DIAGNOSTIC] Error stopping active projectile physics:`, error);
         }
       }
+      
+      // Stop trail particles
+      if (projectile.particles) {
+        console.log(`[GROUND-DIAGNOSTIC] Stopping active projectile particles`);
+        try {
+          projectile.particles.stop();
+        } catch (_e) {
+          // Ignore
+        }
+      }
+      
+      // Fade out sprite and ring over 400ms
+      if (projectile.sprite) {
+        console.log(`[GROUND-DIAGNOSTIC] Starting 400ms fade animation for active projectile`);
+        this.tweens.add({
+          targets: projectile.sprite,
+          alpha: { from: 1, to: 0 },
+          duration: 400,
+          ease: 'Linear',
+          onComplete: () => {
+            console.log(`[GROUND-DIAGNOSTIC] Active projectile fade animation complete, calling completeActiveProjectileDestruction()`);
+            this.completeActiveProjectileDestruction(projectile, index);
+          }
+        });
+      }
+      
+      // Also fade ring
+      if (projectile.ring) {
+        this.tweens.add({
+          targets: projectile.ring,
+          alpha: { from: 1, to: 0 },
+          duration: 400,
+          ease: 'Linear'
+        });
+      }
+      
+      console.log(`[GROUND-DIAGNOSTIC] destroyActiveProjectileOnGroundImpact() setup complete`);
+      
     } catch (error) {
-      console.log('[GROUND-FADE] Error stopping physics:', error);
-    }
-    
-    // Stop trail particles
-    if (projectile.particles) {
+      console.error('[GROUND-DIAGNOSTIC] ERROR in destroyActiveProjectileOnGroundImpact:', error);
+      console.error(error.stack);
+      // Failsafe cleanup
       try {
-        projectile.particles.stop();
-      } catch (_e) {
-        // Ignore
+        if (projectile.sprite) projectile.sprite.destroy();
+        if (projectile.ring) projectile.ring.destroy();
+        if (projectile.particles) {
+          projectile.particles.stop();
+          projectile.particles.destroy();
+        }
+        this.activeProjectiles.splice(index, 1);
+        this.enableSlingshot();
+      } catch (_e2) {
+        // Last resort
       }
     }
-    
-    // Fade out sprite and ring over 400ms
-    this.tweens.add({
-      targets: projectile.sprite,
-      alpha: { from: 1, to: 0 },
-      duration: 400,
-      ease: 'Linear',
-      onComplete: () => {
-        this.completeActiveProjectileDestruction(projectile, index);
-      }
-    });
-    
-    // Also fade ring
-    if (projectile.ring) {
-      this.tweens.add({
-        targets: projectile.ring,
-        alpha: { from: 1, to: 0 },
-        duration: 400,
-        ease: 'Linear'
-      });
-    }
-    
-    console.log('[GROUND-IMPACT] Fade animation started for active projectile (400ms)');
   }
 
   private destroyProjectileImmediately(): void {
@@ -1954,65 +2038,91 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private completeProjectileDestruction(): void {
+    console.log(`[GROUND-DIAGNOSTIC] completeProjectileDestruction() CALLED`);
+    
     if (!this.currentProjectile) {
-      console.log('[GROUND-FADE] Projectile already destroyed');
+      console.log(`[GROUND-DIAGNOSTIC] ABORT: currentProjectile is null`);
       return;
     }
 
     const projectile = this.currentProjectile;
 
     try {
+      console.log(`[GROUND-DIAGNOSTIC] Destroying particles`);
       if (projectile.particles) {
         projectile.particles.destroy();
+        projectile.particles = null;
       }
     } catch (_e) {
-      // Ignore
+      console.log(`[GROUND-DIAGNOSTIC] Error destroying particles:`, _e);
     }
 
     try {
-      projectile.sprite.destroy();
-      projectile.ring.destroy();
+      console.log(`[GROUND-DIAGNOSTIC] Destroying sprite and ring`);
+      if (projectile.sprite) {
+        projectile.sprite.destroy();
+        projectile.sprite = null;
+      }
+      if (projectile.ring) {
+        projectile.ring.destroy();
+        projectile.ring = null;
+      }
     } catch (error) {
-      console.log('[GROUND-FADE] Error destroying objects:', error);
+      console.log(`[GROUND-DIAGNOSTIC] Error destroying objects:`, error);
     }
 
+    console.log(`[GROUND-DIAGNOSTIC] Clearing currentProjectile reference`);
     this.currentProjectile = undefined;
     
     this.destroyJoypad();
     this.resetDragState();
     
+    console.log(`[GROUND-DIAGNOSTIC] Enabling slingshot`);
     this.enableSlingshot();
     
-    console.log('[GROUND-FADE] Fade animation complete, projectile destroyed, slingshot enabled');
+    console.log(`[GROUND-DIAGNOSTIC] completeProjectileDestruction() COMPLETE`);
   }
 
   private completeActiveProjectileDestruction(projectile: ProjectileData, index: number): void {
-    if (!projectile || !projectile.sprite.active) {
-      console.log('[GROUND-FADE] Active projectile already destroyed');
+    console.log(`[GROUND-DIAGNOSTIC] completeActiveProjectileDestruction() CALLED for index ${index}`);
+    
+    if (!projectile || !projectile.sprite || !projectile.sprite.active) {
+      console.log(`[GROUND-DIAGNOSTIC] ABORT: active projectile already destroyed or invalid`);
       return;
     }
 
     try {
+      console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile particles`);
       if (projectile.particles) {
         projectile.particles.destroy();
+        projectile.particles = null;
       }
     } catch (_e) {
-      // Ignore
+      console.log(`[GROUND-DIAGNOSTIC] Error destroying active projectile particles:`, _e);
     }
 
     try {
-      projectile.sprite.destroy();
-      projectile.ring.destroy();
+      console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile sprite and ring`);
+      if (projectile.sprite) {
+        projectile.sprite.destroy();
+        projectile.sprite = null;
+      }
+      if (projectile.ring) {
+        projectile.ring.destroy();
+        projectile.ring = null;
+      }
     } catch (error) {
-      console.log('[GROUND-FADE] Error destroying objects:', error);
+      console.log(`[GROUND-DIAGNOSTIC] Error destroying active projectile objects:`, error);
     }
 
+    console.log(`[GROUND-DIAGNOSTIC] Removing from activeProjectiles array at index ${index}`);
     this.activeProjectiles.splice(index, 1);
     
+    console.log(`[GROUND-DIAGNOSTIC] Enabling slingshot`);
     // Re-enable slingshot for next shot
     this.enableSlingshot();
     
-    console.log('[GROUND-FADE] Fade animation complete, active projectile destroyed from array. Remaining:', this.activeProjectiles.length);
+    console.log(`[GROUND-DIAGNOSTIC] completeActiveProjectileDestruction() COMPLETE. Remaining active: ${this.activeProjectiles.length}`);
   }
 
   private createGroundImpactParticles(x: number, y: number): void {
