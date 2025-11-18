@@ -101,8 +101,8 @@ export class SlingshotScene extends Phaser.Scene {
   private bonusModeAnimation?: Phaser.Time.TimerEvent;
   private bonusModeVisualActive: boolean = false;
   
-  // Powder cost display tracking
-  private powderCostDisplays: Map<TargetData, Phaser.GameObjects.Text> = new Map();
+  // Reward display tracking
+  private rewardDisplays: Map<TargetData, Phaser.GameObjects.Text> = new Map();
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -134,15 +134,15 @@ export class SlingshotScene extends Phaser.Scene {
     }
     this.bonusModeVisualActive = false;
     
-    // Clean up powder cost displays
-    this.powderCostDisplays.forEach((costDisplay) => {
+    // Clean up reward displays
+    this.rewardDisplays.forEach((rewardDisplay) => {
       try {
-        costDisplay.destroy();
+        rewardDisplay.destroy();
       } catch (_e) {
         // Ignore destruction errors
       }
     });
-    this.powderCostDisplays.clear();
+    this.rewardDisplays.clear();
 
     if (this.currentProjectile) {
       try {
@@ -168,8 +168,8 @@ export class SlingshotScene extends Phaser.Scene {
     if (this.targets.length > 0) {
       const existingTargets = [...this.targets];
       existingTargets.forEach((target) => {
-        // Clean up powder cost displays for all targets
-        this.removePowderCostDisplay(target);
+        // Clean up reward displays for all targets
+        this.removeRewardDisplay(target);
         target.sprite.destroy();
         target.graphic.destroy();
         target.ring.destroy();
@@ -698,79 +698,94 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.targets.push(targetData);
 
-    // Create powder cost display inside the circle
-    this.spawnPowderCostDisplay(targetData);
+    // Create reward display inside the circle
+    this.spawnRewardDisplay(targetData);
 
     // DO NOT set up overlap here - it will be handled in launchProjectile()
     // This prevents duplicate collision handlers which cause freezes
   }
 
-  private spawnPowderCostDisplay(circle: TargetData): void {
-    const costAmount = this.shotsInCurrentSequence + 1; // Cost based on position in sequence
-    
-    const costDisplay = this.add.text(
+  private calculateProjectedReward(): number {
+    // Base reward assuming a green hit (good timing)
+    let baseReward = POWDER_REWARDS.GREEN; // 3
+
+    // Apply streak multiplier
+    let reward = baseReward * this.streakMultiplier;
+
+    // Add bonus if active
+    if (this.bonusStageActive) {
+      reward += 1;
+    }
+
+    return Math.floor(reward);
+  }
+
+  private spawnRewardDisplay(circle: TargetData): void {
+    const projectedReward = this.calculateProjectedReward();
+
+    const rewardDisplay = this.add.text(
       circle.fixedX,
       circle.fixedY,
-      `${costAmount}`,
+      `+${projectedReward}`,
       {
         fontSize: '32px',
-        color: '#ffff00',
+        color: '#00ff00',
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 2,
         align: 'center'
       }
     ).setOrigin(0.5, 0.5);
-    
-    costDisplay.setDepth(15); // Above circle but below hit text
-    
+
+    rewardDisplay.setDepth(15); // Above circle but below hit text
+
     // Store reference for tracking
-    this.powderCostDisplays.set(circle, costDisplay);
-    
-    console.log(`[COST] Displaying powder cost ${costAmount} inside circle at (${circle.fixedX}, ${circle.fixedY})`);
+    this.rewardDisplays.set(circle, rewardDisplay);
+
+    console.log(`[REWARD-DISPLAY] Showing projected reward: +${projectedReward} inside circle at (${circle.fixedX}, ${circle.fixedY})`);
   }
 
-  private updatePowderCostDisplay(): void {
-    this.powderCostDisplays.forEach((costDisplay, circle) => {
-      if (!costDisplay.active || !circle.graphic.active) {
+  private updateRewardDisplay(): void {
+    this.rewardDisplays.forEach((rewardDisplay, circle) => {
+      if (!rewardDisplay.active || !circle.graphic.active) {
         // Clean up orphaned displays
-        this.powderCostDisplays.delete(circle);
+        this.rewardDisplays.delete(circle);
         try {
-          costDisplay.destroy();
+          rewardDisplay.destroy();
         } catch (_e) {
           // Ignore destruction errors
         }
         return;
       }
-      
+
       const radiusRatio = circle.graphic.radius / circle.initialRadius; // 1.0 → 0.0
-      
+
       // Scale text proportionally
-      costDisplay.setScale(radiusRatio);
-      
+      rewardDisplay.setScale(radiusRatio);
+
       // Position at circle center
-      costDisplay.setPosition(circle.fixedX, circle.fixedY);
-      
+      rewardDisplay.setPosition(circle.fixedX, circle.fixedY);
+
       // Fade as circle shrinks
-      costDisplay.setAlpha(radiusRatio);
+      rewardDisplay.setAlpha(radiusRatio);
     });
   }
 
-  private removePowderCostDisplay(circle: TargetData): void {
-    const costDisplay = this.powderCostDisplays.get(circle);
-    if (costDisplay) {
+  private removeRewardDisplay(circle: TargetData): void {
+    const rewardDisplay = this.rewardDisplays.get(circle);
+    if (rewardDisplay) {
       try {
-        costDisplay.destroy();
+        rewardDisplay.destroy();
       } catch (_e) {
         // Ignore destruction errors
       }
-      this.powderCostDisplays.delete(circle);
+      this.rewardDisplays.delete(circle);
     }
   }
 
   private createRewardDisplay(circle: TargetData, rewardAmount: number): void {
-    // Remove cost display if it exists
-    this.removePowderCostDisplay(circle);
+    // Remove projected reward display if it exists
+    this.removeRewardDisplay(circle);
     
     // Create reward display
     const rewardDisplay = this.add.text(
@@ -863,9 +878,9 @@ export class SlingshotScene extends Phaser.Scene {
     });
 
     this.targets = this.targets.filter((target) => target.graphic.active);
-    
-    // Update powder cost displays
-    this.updatePowderCostDisplay();
+
+    // Update reward displays
+    this.updateRewardDisplay();
   }
 
   private handleTargetMiss(targetData: TargetData): void {
@@ -875,15 +890,15 @@ export class SlingshotScene extends Phaser.Scene {
     // Handle miss mechanics (reset streaks/bonus)
     this.onMiss();
 
-    // Fade out powder cost display when circle is missed
-    const costDisplay = this.powderCostDisplays.get(targetData);
-    if (costDisplay) {
+    // Fade out reward display when circle is missed
+    const rewardDisplay = this.rewardDisplays.get(targetData);
+    if (rewardDisplay) {
       this.tweens.add({
-        targets: costDisplay,
+        targets: rewardDisplay,
         alpha: 0,
         duration: 500,
         onComplete: () => {
-          this.removePowderCostDisplay(targetData);
+          this.removeRewardDisplay(targetData);
         }
       });
     }
@@ -2110,8 +2125,8 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private removeTarget(targetData: TargetData): void {
-    // Remove powder cost display if it exists
-    this.removePowderCostDisplay(targetData);
+    // Remove reward display if it exists
+    this.removeRewardDisplay(targetData);
     
     targetData.sprite.destroy();
     targetData.graphic.destroy();
