@@ -244,8 +244,8 @@ export class SlingshotScene extends Phaser.Scene {
       });
     }
 
-    // Enhanced ground detection for current projectile
-    if (this.currentProjectile && this.currentProjectile.sprite && !this.currentProjectile.shouldDestroy) {
+    // Enhanced ground detection for current projectile (ONLY when not being aimed)
+    if (this.currentProjectile && this.currentProjectile.sprite && !this.currentProjectile.shouldDestroy && !this.isDragging) {
       const groundLevel = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
       const projectileY = this.currentProjectile.sprite.y;
       
@@ -1017,7 +1017,7 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
-    console.log('[INPUT] Creating joypad');
+    console.log('[JOYPAD-DEBUG] Creating joypad, NOT launching (pointer down only)');
     const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
     const baseRadius = JOYPAD_BASE_RADIUS;
     const centerX = Phaser.Math.Clamp(pointer.x, baseRadius, this.scale.width - baseRadius);
@@ -1028,6 +1028,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.createJoypad(centerX, groundY);
     this.createProjectile(centerX, groundY);
+    
+    console.log('[JOYPAD-DEBUG] Joypad and projectile created for aiming, awaiting drag/release');
 
     if (this.joypad) {
       const pointerWithSetter = pointer as Phaser.Input.Pointer & {
@@ -1052,6 +1054,8 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
+    console.log('[JOYPAD-DEBUG] Drag detected, updating trajectory preview');
+
     const adjustedX = pointer.x + this.pointerOffsetX;
     const adjustedY = pointer.y + this.pointerOffsetY;
 
@@ -1067,9 +1071,12 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
+    console.log('[JOYPAD-DEBUG] Release detected, attempting to launch projectile');
+
     const waitingForSequence = this.countdownActive && !this.sequenceActive;
 
     if (!this.joypad || !this.currentProjectile || waitingForSequence) {
+      console.log('[JOYPAD-DEBUG] Launch cancelled (missing joypad/projectile or waiting for sequence)');
       this.destroyJoypad();
       this.prepareNextShot();
       this.resetDragState();
@@ -1077,6 +1084,12 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     const launched = this.launchProjectile();
+    
+    if (launched) {
+      console.log('[JOYPAD-DEBUG] Projectile launched successfully');
+    } else {
+      console.log('[JOYPAD-DEBUG] Launch failed');
+    }
     
     // Clear joypad UI immediately after shot
     this.destroyJoypad();
