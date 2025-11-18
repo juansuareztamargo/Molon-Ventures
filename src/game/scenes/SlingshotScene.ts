@@ -98,11 +98,8 @@ export class SlingshotScene extends Phaser.Scene {
   // Powder animation tracking
   private powderAnimationTween?: Phaser.Tweens.Tween;
   private transactionTween?: Phaser.Tweens.Tween;
-  private powderCounterX: number = 20;
-  private powderCounterY: number = 20;
   private transactionQueue: Array<{ amount: number; type: 'cost' | 'reward' }> = [];
   private transactionActive: boolean = false;
-  private displayedPowderValue: number = GAME_SETTINGS.INITIAL_POWDER;
   
   // Bonus mode visual tracking
   private bonusModeAnimation?: Phaser.Time.TimerEvent;
@@ -136,7 +133,6 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Clean up transaction queue and tweens
     this.clearPowderTransactionFeedback();
-    this.displayedPowderValue = GAME_SETTINGS.INITIAL_POWDER;
 
     // Clean up bonus mode animations
     if (this.bonusModeAnimation) {
@@ -2013,6 +2009,9 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.activeProjectiles.splice(index, 1);
     
+    // Re-enable slingshot for next shot
+    this.enableSlingshot();
+    
     console.log('[GROUND-FADE] Fade animation complete, active projectile destroyed from array. Remaining:', this.activeProjectiles.length);
   }
 
@@ -2534,6 +2533,9 @@ export class SlingshotScene extends Phaser.Scene {
     // Remove from active array
     this.activeProjectiles.splice(index, 1);
     
+    // Re-enable slingshot for next shot
+    this.enableSlingshot();
+    
     console.log('[CLEANUP] Active projectile cleanup complete. Remaining active:', this.activeProjectiles.length);
   }
 
@@ -2640,12 +2642,17 @@ export class SlingshotScene extends Phaser.Scene {
       // Remove from active array
       this.activeProjectiles.splice(index, 1);
       
+      // Re-enable slingshot for next shot
+      this.enableSlingshot();
+      
       console.log('[OFF-SCREEN] Cleanup complete. Remaining active:', this.activeProjectiles.length);
     } catch (error) {
       console.log('[OFF-SCREEN] Fatal error during cleanup:', error);
       // Failsafe: force cleanup if any error occurs
       try {
         this.activeProjectiles.splice(index, 1);
+        // Still try to re-enable slingshot even in error case
+        this.enableSlingshot();
       } catch (_e2) {
         // Last resort
       }
@@ -2705,6 +2712,9 @@ export class SlingshotScene extends Phaser.Scene {
     // Remove from active array
     this.activeProjectiles.splice(index, 1);
     
+    // Re-enable slingshot for next shot
+    this.enableSlingshot();
+    
     console.log('[GROUND-FADE] Immediate destruction complete. Remaining active:', this.activeProjectiles.length);
   }
 
@@ -2724,8 +2734,6 @@ export class SlingshotScene extends Phaser.Scene {
     // Structured powder HUD container (label, value, transaction)
     const powderHudPaddingX = Math.max(20, width * 0.02);
     const powderHudPaddingY = Math.max(24, height * 0.03);
-    this.powderCounterX = powderHudPaddingX;
-    this.powderCounterY = powderHudPaddingY;
 
     this.powderHudContainer = this.add.container(powderHudPaddingX, powderHudPaddingY);
     this.powderHudContainer.setDepth(100);
@@ -2972,30 +2980,6 @@ export class SlingshotScene extends Phaser.Scene {
       this.transactionText.setVisible(false);
       this.transactionText.setAlpha(0);
       this.transactionText.setText('');
-    }
-  }
-
-  private updatePowderDisplay(amount?: number, type?: 'cost' | 'reward'): void {
-    const newValue = this.powder;
-    const oldValue = this.displayedPowderValue;
-
-    if (!this.powderValue || !this.powderText) {
-      this.displayedPowderValue = newValue;
-      return;
-    }
-
-    if (oldValue !== newValue) {
-      this.animatePowderCounter(oldValue, newValue, type === 'reward');
-    } else {
-      this.powderValue.setText(newValue.toString());
-      this.powderText.setText(`POWDER: ${newValue}`);
-      this.layoutPowderHud();
-    }
-
-    this.displayedPowderValue = newValue;
-
-    if (amount && type) {
-      this.displayPowderTransactionFeedback(amount, type === 'reward');
     }
   }
 
