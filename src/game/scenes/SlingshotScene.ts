@@ -551,6 +551,13 @@ export class SlingshotScene extends Phaser.Scene {
     // Only reset sequence-specific counters, let bonus mode persist across sequences
     console.log('[SEQUENCE] New sequence started - bonus mode counters preserved');
 
+    // Reset streak counters for the new sequence while preserving bonus state
+    this.consecutiveHits = 0;
+    this.streakMultiplier = 1;
+    this.streakCounterText.setText('Streak: 0');
+    this.streakMultiplierText.setText('x1');
+    console.log('[SEQUENCE] Streak counters reset - consecutiveHits: 0, multiplier: 1x');
+
     // Clear any existing targets
     this.targets.forEach(target => this.removeTarget(target));
     this.targets = [];
