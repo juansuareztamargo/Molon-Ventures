@@ -554,6 +554,10 @@ export class SlingshotScene extends Phaser.Scene {
     this.targets.forEach(target => this.removeTarget(target));
     this.targets = [];
 
+    // CRITICAL: Enable input after countdown completes
+    this.slingshotEnabled = true;
+    console.log('[INPUT] New sequence started, slingshot enabled and ready for input');
+
     this.updateRoundText();
     this.updateSequenceProgressText();
     
@@ -989,39 +993,31 @@ export class SlingshotScene extends Phaser.Scene {
     this.input.on('pointermove', this.onPointerMove, this);
     this.input.on('pointerup', this.onPointerUp, this);
     this.input.on('pointerupoutside', this.onPointerUp, this);
+    
+    this.slingshotEnabled = true;
+    console.log('[INPUT] Input handlers registered, slingshot enabled');
   }
 
   private onPointerDown(pointer: Phaser.Input.Pointer): void {
-    console.log('[INPUT] PointerDown - gameOver:', this.gameOver, 'roundComplete:', this.roundComplete, 'isDragging:', this.isDragging, 'activeProjectiles:', this.activeProjectiles.length, 'sequenceActive:', this.sequenceActive, 'powder:', this.powder, 'slingshotEnabled:', this.slingshotEnabled);
+    console.log('[INPUT] Pointer down event fired at', pointer.x, pointer.y);
     
+    // Basic checks only - don't block input unnecessarily
     if (!this.slingshotEnabled) {
-      console.log('[INPUT] Blocked: slingshot disabled');
+      console.log('[INPUT] BLOCKED: slingshotEnabled is false');
       return;
     }
 
     if (this.gameOver || this.roundComplete) {
-      console.log('[INPUT] Blocked: gameOver or roundComplete');
+      console.log('[INPUT] BLOCKED: gameOver or roundComplete');
       return;
     }
 
-    // CRITICAL FIX: Remove currentProjectile check to allow concurrent shooting
     if (this.isDragging) {
-      console.log('[INPUT] Blocked: already dragging');
+      console.log('[INPUT] BLOCKED: Already dragging');
       return;
     }
 
-    const canPrepareShot = this.sequenceActive || this.countdownActive;
-    if (!canPrepareShot) {
-      console.log('[INPUT] Blocked: sequence not active');
-      return;
-    }
-
-    if (this.powder <= 0) {
-      console.log('[INPUT] Blocked: no powder');
-      return;
-    }
-
-    console.log('[INPUT] Creating joypad and projectile (concurrent shooting enabled)');
+    console.log('[INPUT] Creating joypad');
     const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
     const baseRadius = JOYPAD_BASE_RADIUS;
     const centerX = Phaser.Math.Clamp(pointer.x, baseRadius, this.scale.width - baseRadius);
