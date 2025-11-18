@@ -2760,8 +2760,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Keep original powderText for backward compatibility with existing animation methods
     this.powderText = this.add.text(
-      powderHudPadding,
-      powderHudBaseline - 14,
+      powderHudPaddingX,
+      powderHudPaddingY - 14,
       `POWDER: ${this.powder}`,
       createTextStyle('28px', '#FFD700')
     );
