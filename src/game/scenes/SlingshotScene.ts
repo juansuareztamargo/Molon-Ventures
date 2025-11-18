@@ -707,21 +707,6 @@ export class SlingshotScene extends Phaser.Scene {
     // This prevents duplicate collision handlers which cause freezes
   }
 
-  private calculateProjectedReward(): number {
-    // Base reward assuming a green hit (good timing)
-    let baseReward = POWDER_REWARDS.GREEN; // 3
-
-    // Apply streak multiplier
-    let reward = baseReward * this.streakMultiplier;
-
-    // Add bonus if active
-    if (this.bonusStageActive) {
-      reward += 1;
-    }
-
-    return Math.floor(reward);
-  }
-
   private spawnRewardDisplay(circle: TargetData): void {
     const baseReward = circle.baseReward;
 
@@ -985,7 +970,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     if (!this.textures.exists('trail-particle')) {
       const graphics = this.add.graphics();
-      graphics.fillStyle(0xcccccc, 1);
+      graphics.fillStyle(0x888888, 1);
       graphics.fillCircle(2, 2, 2);
       graphics.generateTexture('trail-particle', 4, 4);
       graphics.destroy();
@@ -1011,15 +996,15 @@ export class SlingshotScene extends Phaser.Scene {
     // Create particle emitter for trail (not active yet, will activate on launch)
     const particles = this.add.particles(x, y, 'trail-particle', {
       speed: 0,
-      scale: { start: 0.8, end: 0 },
-      alpha: { start: 0.6, end: 0 },
-      lifespan: 400,
+      scale: { start: 0.4, end: 0 },
+      alpha: { start: 0.4, end: 0 },
+      lifespan: 300,
       frequency: 50,
       blendMode: 'NORMAL',
     });
     particles.setDepth(58);
     particles.stop();
-    console.log('[SHOOT-DEBUG] Trail particle emitter initialized and paused');
+    console.log('[PARTICLES] Grey trail particle emitter created (subtle, 300ms lifespan)');
 
     this.currentProjectile = {
       sprite,
