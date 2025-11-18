@@ -28,7 +28,6 @@ interface JoypadUI {
   trajectoryLine: Phaser.GameObjects.Graphics;
   centerX: number;
   centerY: number;
-  groundY: number;
   offsetX: number;
   offsetY: number;
 }
@@ -83,6 +82,8 @@ export class SlingshotScene extends Phaser.Scene {
   private activePointer?: Phaser.Input.Pointer;
   private pointerOffsetX: number = 0;
   private pointerOffsetY: number = 0;
+  private dragStartX: number = 0;
+  private dragStartY: number = 0;
   private shotsInCurrentSequence: number = 0;
 
   // Advanced powder mechanics
@@ -909,6 +910,8 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
+    console.log(`[SHOOT-DEBUG] Creating projectile at (${x}, ${y})`);
+
     if (!this.textures.exists('projectile-arrow')) {
       const graphics = this.add.graphics();
       
@@ -949,6 +952,7 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     const sprite = this.physics.add.sprite(x, y, 'projectile-arrow');
+    console.log(`[SHOOT-DEBUG] Sprite created at (${sprite.x.toFixed(2)}, ${sprite.y.toFixed(2)})`);
 
     const body = sprite.body as Phaser.Physics.Arcade.Body;
     body.setCollideWorldBounds(false);
@@ -956,6 +960,7 @@ export class SlingshotScene extends Phaser.Scene {
     body.setCircle(8);
     body.setMass(0.5);
     body.setAllowGravity(false);
+    console.log('[PHYSICS] Projectile initialized with gravity disabled for aiming phase');
 
     sprite.setDepth(60);
 
@@ -974,6 +979,7 @@ export class SlingshotScene extends Phaser.Scene {
     });
     particles.setDepth(58);
     particles.stop();
+    console.log('[SHOOT-DEBUG] Trail particle emitter initialized and paused');
 
     this.currentProjectile = {
       sprite,
@@ -984,6 +990,7 @@ export class SlingshotScene extends Phaser.Scene {
       shouldDestroy: false,
       particles,
     };
+    console.log('[SHOOT-DEBUG] Projectile ready for aiming');
   }
 
   private setupInput(): void {
@@ -1018,16 +1025,27 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     console.log('[JOYPAD-DEBUG] Creating joypad, NOT launching (pointer down only)');
-    const groundY = this.scale.height - GAME_SETTINGS.GROUND_HEIGHT;
     const baseRadius = JOYPAD_BASE_RADIUS;
-    const centerX = Phaser.Math.Clamp(pointer.x, baseRadius, this.scale.width - baseRadius);
+    const screenWidth = this.scale.width;
+    const screenHeight = this.scale.height;
+    const groundLevel = screenHeight - GAME_SETTINGS.GROUND_HEIGHT;
+    const centerX = Phaser.Math.Clamp(pointer.x, baseRadius, screenWidth - baseRadius);
+    const minCenterY = baseRadius;
+    const maxCenterY = Math.max(minCenterY, groundLevel - baseRadius);
+    const centerY = Phaser.Math.Clamp(pointer.y, minCenterY, maxCenterY);
+
+    this.dragStartX = pointer.x;
+    this.dragStartY = pointer.y;
+
+    console.log(`[JOYPAD] Creating joypad at (${centerX}, ${centerY})`);
+    console.log(`[DRAG-START] Stored at (${this.dragStartX}, ${this.dragStartY})`);
 
     this.isDragging = true;
     this.activePointer = pointer;
     this.snappedVelocity = undefined;
 
-    this.createJoypad(centerX, groundY);
-    this.createProjectile(centerX, groundY);
+    this.createJoypad(centerX, centerY);
+    this.createProjectile(centerX, centerY);
     
     console.log('[JOYPAD-DEBUG] Joypad and projectile created for aiming, awaiting drag/release');
 
@@ -1083,6 +1101,13 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
+    const joypadX = this.joypad.centerX;
+    const joypadY = this.joypad.centerY;
+    console.log(`[JOYPAD-POSITION] Joypad at (${joypadX.toFixed(2)}, ${joypadY.toFixed(2)})`);
+    console.log(
+      `[DRAG-VECTOR] Drag distance: (${this.joypad.offsetX.toFixed(2)}, ${this.joypad.offsetY.toFixed(2)})`
+    );
+
     const launched = this.launchProjectile();
     
     if (launched) {
@@ -1110,6 +1135,8 @@ export class SlingshotScene extends Phaser.Scene {
   private resetDragState(): void {
     this.isDragging = false;
     this.clearDragPointerData();
+    this.dragStartX = 0;
+    this.dragStartY = 0;
   }
 
   private enableSlingshot(): void {
@@ -1117,13 +1144,13 @@ export class SlingshotScene extends Phaser.Scene {
     console.log('[INPUT] Slingshot ENABLED');
   }
 
-  private createJoypad(x: number, groundY: number): void {
+  private createJoypad(x: number, centerY: number): void {
     const container = this.add.container(0, 0);
 
-    const base = this.add.circle(x, groundY, JOYPAD_BASE_RADIUS, COLORS.WHITE, 0.22);
+    const base = this.add.circle(x, centerY, JOYPAD_BASE_RADIUS, COLORS.WHITE, 0.22);
     base.setStrokeStyle(3, COLORS.WHITE, 0.55);
 
-    const knob = this.add.circle(x, groundY, JOYPAD_KNOB_RADIUS, COLORS.PRIMARY, 0.72);
+    const knob = this.add.circle(x, centerY, JOYPAD_KNOB_RADIUS, COLORS.PRIMARY, 0.72);
     knob.setStrokeStyle(3, COLORS.WHITE, 0.9);
 
     const powerLine = this.add.graphics();
@@ -1139,15 +1166,14 @@ export class SlingshotScene extends Phaser.Scene {
       powerLine,
       trajectoryLine,
       centerX: x,
-      centerY: groundY,
-      groundY,
+      centerY,
       offsetX: 0,
       offsetY: 0,
     };
 
     if (this.currentProjectile) {
-      this.currentProjectile.sprite.setPosition(x, groundY);
-      this.currentProjectile.ring.setPosition(x, groundY);
+      this.currentProjectile.sprite.setPosition(x, centerY);
+      this.currentProjectile.ring.setPosition(x, centerY);
     }
   }
 
@@ -1170,8 +1196,8 @@ export class SlingshotScene extends Phaser.Scene {
     this.joypad.offsetY = offsetY;
 
     if (this.currentProjectile) {
-      this.currentProjectile.sprite.setPosition(this.joypad.centerX, this.joypad.groundY);
-      this.currentProjectile.ring.setPosition(this.joypad.centerX, this.joypad.groundY);
+      this.currentProjectile.sprite.setPosition(this.joypad.centerX, this.joypad.centerY);
+      this.currentProjectile.ring.setPosition(this.joypad.centerX, this.joypad.centerY);
 
       // Rotate arrow to point in drag direction (opposite of offset)
       const aimAngle = Math.atan2(-offsetY, -offsetX);
@@ -1397,19 +1423,37 @@ export class SlingshotScene extends Phaser.Scene {
       return false;
     }
 
+    const spawnX = this.joypad.centerX;
+    const spawnY = this.joypad.centerY;
+
+    this.currentProjectile.sprite.setPosition(spawnX, spawnY);
+    this.currentProjectile.ring.setPosition(spawnX, spawnY);
+
+    console.log(`[SHOOT-DEBUG] Launching projectile from (${spawnX.toFixed(2)}, ${spawnY.toFixed(2)})`);
+
     let velocityX: number;
     let velocityY: number;
+    let velocitySource = 'drag';
 
     // Use snapped velocity if available, otherwise use manual aim
     if (this.snappedVelocity) {
       velocityX = this.snappedVelocity.vx;
       velocityY = this.snappedVelocity.vy;
+      velocitySource = 'snapped';
+      console.log(
+        `[VELOCITY] Using snapped velocity override: (${velocityX.toFixed(2)}, ${velocityY.toFixed(2)})`
+      );
       this.snappedVelocity = undefined;
     } else {
       const velocityMultiplier = 6.5;
       velocityX = -this.joypad.offsetX * velocityMultiplier;
       velocityY = -this.joypad.offsetY * velocityMultiplier;
+      console.log(`[VELOCITY] Drag vector scaled with multiplier ${velocityMultiplier.toFixed(2)}`);
     }
+
+    console.log(
+      `[VELOCITY] Launch velocity (${velocitySource}): (${velocityX.toFixed(2)}, ${velocityY.toFixed(2)})`
+    );
 
     if (!this.currentProjectile) {
       return false;
@@ -1417,7 +1461,18 @@ export class SlingshotScene extends Phaser.Scene {
 
     const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body;
     body.setAllowGravity(true);
+    console.log('[PHYSICS] Gravity enabled for projectile');
+
     body.setVelocity(velocityX, velocityY);
+    console.log(
+      `[PHYSICS-CHECK] Body velocity: (${body.velocity.x.toFixed(2)}, ${body.velocity.y.toFixed(2)})`
+    );
+    console.log(
+      `[PHYSICS-CHECK] Body position: (${body.x.toFixed(2)}, ${body.y.toFixed(2)})`
+    );
+    console.log(
+      `[PHYSICS-CHECK] Acceleration: (${body.acceleration.x.toFixed(2)}, ${body.acceleration.y.toFixed(2)})`
+    );
 
     // Rotate arrow to point in direction of travel
     const angle = Math.atan2(velocityY, velocityX);
@@ -1430,6 +1485,7 @@ export class SlingshotScene extends Phaser.Scene {
         this.currentProjectile.sprite.y
       );
       this.currentProjectile.particles.start();
+      console.log('[SHOOT-DEBUG] Trail particle emitter started');
     }
 
     if (!this.currentProjectile) {
