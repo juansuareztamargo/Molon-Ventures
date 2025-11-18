@@ -1027,25 +1027,25 @@ export class SlingshotScene extends Phaser.Scene {
     console.log('[JOYPAD-DEBUG] Creating joypad, NOT launching (pointer down only)');
     const baseRadius = JOYPAD_BASE_RADIUS;
     const screenWidth = this.scale.width;
-    const screenHeight = this.scale.height;
-    const groundLevel = screenHeight - GAME_SETTINGS.GROUND_HEIGHT;
-    const centerX = Phaser.Math.Clamp(pointer.x, baseRadius, screenWidth - baseRadius);
-    const minCenterY = baseRadius;
-    const maxCenterY = Math.max(minCenterY, groundLevel - baseRadius);
-    const centerY = Phaser.Math.Clamp(pointer.y, minCenterY, maxCenterY);
-
+    
+    // X from click, Y locked to ground
+    const joypadX = Phaser.Math.Clamp(pointer.x, baseRadius, screenWidth - baseRadius);
+    const joypadY = this.cameras.main.height - 120; // FIXED ground level
+    
+    console.log(`[JOYPAD] Positioning at (${joypadX}, ${joypadY})`);
+    
     this.dragStartX = pointer.x;
-    this.dragStartY = pointer.y;
-
-    console.log(`[JOYPAD] Creating joypad at (${centerX}, ${centerY})`);
+    this.dragStartY = joypadY; // Store ground level Y, not click Y
+    
+    console.log(`[JOYPAD] Creating joypad at (${joypadX}, ${joypadY})`);
     console.log(`[DRAG-START] Stored at (${this.dragStartX}, ${this.dragStartY})`);
 
     this.isDragging = true;
     this.activePointer = pointer;
     this.snappedVelocity = undefined;
 
-    this.createJoypad(centerX, centerY);
-    this.createProjectile(centerX, centerY);
+    this.createJoypad(joypadX, joypadY);
+    this.createProjectile(joypadX, joypadY);
     
     console.log('[JOYPAD-DEBUG] Joypad and projectile created for aiming, awaiting drag/release');
 
