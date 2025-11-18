@@ -18,6 +18,7 @@ interface TargetData {
   ring: Phaser.GameObjects.Arc;
   fixedX: number;
   fixedY: number;
+  baseReward: number;
 }
 
 interface JoypadUI {
@@ -694,6 +695,7 @@ export class SlingshotScene extends Phaser.Scene {
       missTriggered: false,
       fixedX,
       fixedY,
+      baseReward: POWDER_REWARDS.RED, // Starts as red with +1 reward
     };
 
     this.targets.push(targetData);
@@ -721,15 +723,15 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private spawnRewardDisplay(circle: TargetData): void {
-    const projectedReward = this.calculateProjectedReward();
+    const baseReward = circle.baseReward;
 
     const rewardDisplay = this.add.text(
       circle.fixedX,
       circle.fixedY,
-      `+${projectedReward}`,
+      `+${baseReward}`,
       {
         fontSize: '32px',
-        color: '#00ff00',
+        color: '#ffff00',
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 2,
@@ -742,7 +744,7 @@ export class SlingshotScene extends Phaser.Scene {
     // Store reference for tracking
     this.rewardDisplays.set(circle, rewardDisplay);
 
-    console.log(`[REWARD-DISPLAY] Showing projected reward: +${projectedReward} inside circle at (${circle.fixedX}, ${circle.fixedY})`);
+    console.log(`[CIRCLE] Spawned with base reward: +${baseReward}`);
   }
 
   private updateRewardDisplay(): void {
@@ -758,16 +760,32 @@ export class SlingshotScene extends Phaser.Scene {
         return;
       }
 
-      const radiusRatio = circle.graphic.radius / circle.initialRadius; // 1.0 → 0.0
-
-      // Scale text proportionally
-      rewardDisplay.setScale(radiusRatio);
+      // Determine current base reward based on circle color
+      const currentColor = circle.graphic.fillColor;
+      let baseReward: number;
+      
+      if (currentColor === TARGET_COLORS.RED) {
+        baseReward = POWDER_REWARDS.RED;
+      } else if (currentColor === TARGET_COLORS.ORANGE) {
+        baseReward = POWDER_REWARDS.ORANGE;
+      } else if (currentColor === TARGET_COLORS.GREEN) {
+        baseReward = POWDER_REWARDS.GREEN;
+      } else if (currentColor === TARGET_COLORS.PURPLE) {
+        baseReward = POWDER_REWARDS.PURPLE;
+      } else {
+        baseReward = POWDER_REWARDS.RED;
+      }
+      
+      // Update circle's base reward
+      circle.baseReward = baseReward;
+      
+      // Update display text to show current base reward
+      rewardDisplay.setText(`+${baseReward}`);
 
       // Position at circle center
       rewardDisplay.setPosition(circle.fixedX, circle.fixedY);
 
-      // Fade as circle shrinks
-      rewardDisplay.setAlpha(radiusRatio);
+      // Keep constant size and alpha - don't scale or fade
     });
   }
 
@@ -784,17 +802,17 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private createRewardDisplay(circle: TargetData, rewardAmount: number): void {
-    // Remove projected reward display if it exists
+    // Remove base reward display if it exists
     this.removeRewardDisplay(circle);
     
-    // Create reward display
+    // Create actual reward display showing multiplied amount
     const rewardDisplay = this.add.text(
       circle.fixedX,
       circle.fixedY,
       `+${rewardAmount}`,
       {
         fontSize: '32px',
-        color: '#00ff00',
+        color: '#FFD700',
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 2,
@@ -820,7 +838,7 @@ export class SlingshotScene extends Phaser.Scene {
       }
     });
     
-    console.log(`[REWARD] Displaying reward +${rewardAmount} at circle center (${circle.fixedX}, ${circle.fixedY})`);
+    console.log(`[REWARD] Displaying actual reward +${rewardAmount} (base: +${circle.baseReward}) at circle center (${circle.fixedX}, ${circle.fixedY})`);
   }
 
   private updateTargets(): void {
