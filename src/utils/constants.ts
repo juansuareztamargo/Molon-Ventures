@@ -48,3 +48,11 @@ export const TARGET_COLORS = {
   GREEN: 0x2ecc71,
   PURPLE: 0x9b59b6,
 } as const;
+
+export const CIRCLE_SPACING = {
+  MIN_CIRCLE_DISTANCE: 150,
+  SCREEN_PADDING: 100,
+  MAX_POSITIONING_ATTEMPTS: 50,
+  SPAWN_HEIGHT_MIN: 0.1,
+  SPAWN_HEIGHT_MAX: 0.5,
+} as const;

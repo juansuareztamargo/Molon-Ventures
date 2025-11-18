@@ -1,6 +1,6 @@
 import Phaser from 'phaser';
 import { SCENES } from '@/config/gameConfig';
-import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS, TARGET_COLORS, POWDER_REWARDS } from '@/utils/constants';
+import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS, TARGET_COLORS, POWDER_REWARDS, CIRCLE_SPACING } from '@/utils/constants';
 import { createButton, createTextStyle } from '@/utils/helpers';
 
 const JOYPAD_BASE_RADIUS = 82;
@@ -607,40 +607,49 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private findValidCirclePosition(screenWidth: number, screenHeight: number, radius: number): { x: number; y: number } {
-    const MIN_CIRCLE_DISTANCE = 150; // pixels between circle centers
-    const SCREEN_PADDING = 100; // distance from screen edges
-    const maxAttempts = 50;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const x = SCREEN_PADDING + Math.random() * (screenWidth - 2 * SCREEN_PADDING);
-      const y = SCREEN_PADDING + Math.random() * (screenHeight * 0.4); // Upper 40% of screen
+    for (let attempt = 0; attempt < CIRCLE_SPACING.MAX_POSITIONING_ATTEMPTS; attempt++) {
+      const x = CIRCLE_SPACING.SCREEN_PADDING + Math.random() * (screenWidth - 2 * CIRCLE_SPACING.SCREEN_PADDING);
+      const minY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MIN;
+      const maxY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MAX;
+      const y = minY + Math.random() * (maxY - minY);
       
-      if (this.isValidCirclePosition(x, y, radius, MIN_CIRCLE_DISTANCE)) {
+      if (this.isValidCirclePosition(x, y, radius, CIRCLE_SPACING.MIN_CIRCLE_DISTANCE)) {
+        console.log(`[CIRCLE] Valid position found on attempt ${attempt + 1}: (${x.toFixed(0)}, ${y.toFixed(0)})`);
         return { x, y };
       }
     }
 
-    // Fallback: return random position if we couldn't find valid one after max attempts
-    console.warn('Could not find valid circle position after max attempts, using fallback');
-    const fallbackX = SCREEN_PADDING + Math.random() * (screenWidth - 2 * SCREEN_PADDING);
-    const fallbackY = SCREEN_PADDING + Math.random() * (screenHeight * 0.4);
-    return { x: fallbackX, y: fallbackY };
+    // Fallback: use deterministic horizontal slot positioning
+    console.log(`[CIRCLE] Using fallback position after ${CIRCLE_SPACING.MAX_POSITIONING_ATTEMPTS} attempts`);
+    const slotIndex = this.targets.length;
+    const usableWidth = screenWidth - 2 * CIRCLE_SPACING.SCREEN_PADDING;
+    const slotWidth = usableWidth / Math.max(this.targetsInRound, 3);
+    const fallbackX = CIRCLE_SPACING.SCREEN_PADDING + (slotIndex * slotWidth) + (slotWidth / 2);
+    const fallbackY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MIN + (screenHeight * (CIRCLE_SPACING.SPAWN_HEIGHT_MAX - CIRCLE_SPACING.SPAWN_HEIGHT_MIN) / 2);
+    const clampedX = Phaser.Math.Clamp(fallbackX, CIRCLE_SPACING.SCREEN_PADDING + radius, screenWidth - CIRCLE_SPACING.SCREEN_PADDING - radius);
+    const clampedY = Phaser.Math.Clamp(fallbackY, CIRCLE_SPACING.SCREEN_PADDING + radius, screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MAX - radius);
+    
+    console.log(`[CIRCLE] Fallback slot index: ${slotIndex}, position: (${clampedX.toFixed(0)}, ${clampedY.toFixed(0)})`);
+    return { x: clampedX, y: clampedY };
   }
 
   private isValidCirclePosition(x: number, y: number, radius: number, minDistance: number): boolean {
-    const SCREEN_PADDING = 100;
     const screenWidth = this.scale.width;
     const screenHeight = this.scale.height;
 
-    // Check screen bounds (with padding)
-    if (x - radius < SCREEN_PADDING || x + radius > screenWidth - SCREEN_PADDING) {
-      return false;
-    }
-    if (y - radius < SCREEN_PADDING || y + radius > screenHeight - SCREEN_PADDING) {
+    // Check horizontal bounds with padding
+    if (x - radius < CIRCLE_SPACING.SCREEN_PADDING || x + radius > screenWidth - CIRCLE_SPACING.SCREEN_PADDING) {
       return false;
     }
 
-    // Check distance from other circles
+    // Check vertical bounds - must be in spawn height band
+    const minY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MIN;
+    const maxY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MAX;
+    if (y - radius < minY || y + radius > maxY) {
+      return false;
+    }
+
+    // Check distance from other circles (center-to-center minus radii)
     for (const target of this.targets) {
       const dx = x - target.fixedX;
       const dy = y - target.fixedY;
@@ -648,11 +657,11 @@ export class SlingshotScene extends Phaser.Scene {
       const requiredDistance = minDistance + radius + target.initialRadius;
 
       if (distance < requiredDistance) {
-        return false; // Too close to another circle
+        return false;
       }
     }
 
-    return true; // Valid position
+    return true;
   }
 
   private spawnTarget(): void {
@@ -724,12 +733,11 @@ export class SlingshotScene extends Phaser.Scene {
       }
     ).setOrigin(0.5, 0.5);
 
-    rewardDisplay.setDepth(15); // Above circle but below hit text
+    rewardDisplay.setDepth(15);
 
-    // Store reference for tracking
     this.rewardDisplays.set(circle, rewardDisplay);
 
-    console.log(`[CIRCLE] Spawned with base reward: +${baseReward}`);
+    console.log(`[CIRCLE] Spawned at (${circle.fixedX.toFixed(0)}, ${circle.fixedY.toFixed(0)}) with base reward: +${baseReward} radius: ${circle.initialRadius}`);
   }
 
   private updateRewardDisplay(): void {
