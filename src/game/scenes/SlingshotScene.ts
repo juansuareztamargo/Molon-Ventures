@@ -606,12 +606,8 @@ export class SlingshotScene extends Phaser.Scene {
     // Only reset sequence-specific counters, let bonus mode persist across sequences
     console.log('[SEQUENCE] New sequence started - bonus mode counters preserved');
 
-    // Reset streak counters for the new sequence while preserving bonus state
-    this.consecutiveHits = 0;
-    this.streakMultiplier = 1;
-    this.streakCounterText.setText('Streak: 0');
-    this.streakMultiplierText.setText('x1');
-    console.log('[SEQUENCE] Streak counters reset - consecutiveHits: 0, multiplier: 1x');
+    // NOTE: Do NOT reset streak here - it's already reset in resetStreakBeforeCountdown()
+    // called before the countdown begins
 
     // Clear any existing targets
     this.targets.forEach(target => this.removeTarget(target));
@@ -3381,6 +3377,9 @@ export class SlingshotScene extends Phaser.Scene {
         this.targets.forEach(target => this.removeTarget(target));
         this.targets = [];
         
+        // Reset streak BEFORE countdown
+        this.resetStreakBeforeCountdown();
+        
         this.startCountdown();
       },
       140,
@@ -3461,6 +3460,27 @@ export class SlingshotScene extends Phaser.Scene {
     });
   }
 
+  private resetStreakBeforeCountdown(): void {
+    console.log('[SEQUENCE] Resetting streak before countdown');
+
+    // Reset streak counters
+    this.consecutiveHits = 0;
+    this.streakMultiplier = 1;
+
+    // Update UI displays if they exist
+    if (this.streakCounterText) {
+      this.streakCounterText.setText('Streak: 0');
+    }
+    if (this.streakMultiplierText) {
+      this.streakMultiplierText.setText('x1');
+    }
+
+    console.log('[SEQUENCE] Streak reset complete - consecutiveHits: 0, multiplier: 1x');
+
+    // NOTE: Do NOT reset bonusStageActive or consecutivePerfects
+    // Bonus mode persists across sequences
+  }
+
   private nextRound(): void {
     this.currentRound++;
     this.roundComplete = false;
@@ -3468,6 +3488,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.targets.forEach((target) => this.removeTarget(target));
     this.targets = [];
     this.prepareNextShot();
+
+    // Reset streak BEFORE countdown
+    this.resetStreakBeforeCountdown();
 
     // Start next sequence with countdown for consistency
     this.startCountdown();
