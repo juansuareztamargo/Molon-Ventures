@@ -6,6 +6,16 @@ import { createButton, createTextStyle } from '@/utils/helpers';
 const JOYPAD_BASE_RADIUS = 82;
 const JOYPAD_KNOB_RADIUS = 26;
 const MISS_EDGE_PADDING = 50;
+const STATUS_INDICATOR_BASE_Y = 180;
+const STATUS_INDICATOR_SPACING = 70;
+const STATUS_INDICATOR_MAX = 3;
+const STATUS_INDICATOR_ENTRY_DURATION = 260;
+const STATUS_INDICATOR_HOLD_DURATION = 1400;
+const STATUS_INDICATOR_FADE_DURATION = 450;
+const STATUS_INDICATOR_STAGGER_STEP = 80;
+const STATUS_INDICATOR_BURST_THRESHOLD = 32;
+const STATUS_INDICATOR_DEPTH = 260;
+const STATUS_INDICATOR_SUBTEXT_OFFSET = 44;
 
 interface TargetData {
   sprite: Phaser.Physics.Arcade.Sprite;
@@ -41,6 +51,20 @@ interface ProjectileData {
   hasCollided: boolean;
   shouldDestroy: boolean;
   particles?: Phaser.GameObjects.Particles.ParticleEmitter;
+}
+
+interface StatusIndicatorRequest {
+  mainText: string;
+  subText: string;
+  color: string;
+  requestedAt: number;
+}
+
+interface ActiveStatusIndicator {
+  container: Phaser.GameObjects.Container;
+  timer?: Phaser.Time.TimerEvent;
+  introTween?: Phaser.Tweens.Tween;
+  fadeTween?: Phaser.Tweens.Tween;
 }
 
 export class SlingshotScene extends Phaser.Scene {
@@ -107,6 +131,12 @@ export class SlingshotScene extends Phaser.Scene {
   
   // Reward display tracking
   private rewardDisplays: Map<TargetData, Phaser.GameObjects.Text> = new Map();
+  
+  // Status indicator tracking
+  private statusIndicators: ActiveStatusIndicator[] = [];
+  private statusIndicatorQueue: StatusIndicatorRequest[] = [];
+  private statusIndicatorLastRequestTime: number | null = null;
+  private statusIndicatorBurstCount: number = 0;
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -150,6 +180,7 @@ export class SlingshotScene extends Phaser.Scene {
       }
     });
     this.rewardDisplays.clear();
+    this.clearStatusIndicators();
 
     if (this.currentProjectile) {
       try {
@@ -2546,32 +2577,186 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private showStatusIndicator(mainText: string, color: string, subText: string): void {
-    const container = this.add.container(this.cameras.main.centerX, 200);
-    
-    const main = this.add.text(0, 0, mainText, {
+    const request: StatusIndicatorRequest = {
+      mainText,
+      subText,
+      color,
+      requestedAt: this.time ? this.time.now : 0
+    };
+
+    this.statusIndicatorQueue.push(request);
+    this.processStatusIndicatorQueue();
+  }
+
+  private processStatusIndicatorQueue(): void {
+    while (this.statusIndicators.length < STATUS_INDICATOR_MAX && this.statusIndicatorQueue.length > 0) {
+      const nextRequest = this.statusIndicatorQueue.shift();
+      if (nextRequest) {
+        this.spawnStatusIndicator(nextRequest);
+      }
+    }
+  }
+
+  private spawnStatusIndicator(request: StatusIndicatorRequest): void {
+    const container = this.add.container(this.cameras.main.centerX, STATUS_INDICATOR_BASE_Y);
+    container.setDepth(STATUS_INDICATOR_DEPTH);
+    container.setAlpha(0);
+
+    const main = this.add.text(0, 0, request.mainText, {
       fontSize: '48px',
-      color: color,
+      color: request.color,
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 3
     }).setOrigin(0.5);
-    
-    const sub = this.add.text(0, 50, subText, {
+
+    const sub = this.add.text(0, STATUS_INDICATOR_SUBTEXT_OFFSET, request.subText, {
       fontSize: '24px',
-      color: color
+      color: request.color,
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 2
     }).setOrigin(0.5);
-    
+
     container.add([main, sub]);
-    container.setDepth(260);
-    
-    // Animate and remove
-    this.tweens.add({
+
+    const indicator: ActiveStatusIndicator = { container };
+    this.statusIndicators.push(indicator);
+
+    this.layoutStatusIndicators();
+
+    const delay = this.computeStatusIndicatorDelay(request.requestedAt);
+
+    indicator.introTween = this.tweens.add({
       targets: container,
-      scale: {from: 0.5, to: 1},
-      alpha: {from: 1, to: 0},
-      duration: 2000,
-      onComplete: () => container.destroy()
+      alpha: { from: 0, to: 1 },
+      scaleX: { from: 0.9, to: 1 },
+      scaleY: { from: 0.9, to: 1 },
+      duration: STATUS_INDICATOR_ENTRY_DURATION,
+      ease: 'Back.easeOut',
+      delay
     });
+
+    indicator.timer = this.time.delayedCall(
+      delay + STATUS_INDICATOR_ENTRY_DURATION + STATUS_INDICATOR_HOLD_DURATION,
+      () => this.fadeOutStatusIndicator(indicator)
+    );
+  }
+
+  private layoutStatusIndicators(): void {
+    const baseY = STATUS_INDICATOR_BASE_Y;
+    const spacing = STATUS_INDICATOR_SPACING;
+
+    this.statusIndicators.forEach((indicator, index) => {
+      const container = indicator.container;
+      if (!container || !container.active) {
+        return;
+      }
+
+      container.setDepth(STATUS_INDICATOR_DEPTH);
+      const targetY = baseY + index * spacing;
+
+      if (Math.abs(container.y - targetY) < 1) {
+        container.setY(targetY);
+        return;
+      }
+
+      this.tweens.add({
+        targets: container,
+        y: targetY,
+        duration: 200,
+        ease: 'Quad.easeOut'
+      });
+    });
+  }
+
+  private computeStatusIndicatorDelay(requestedAt: number): number {
+    if (this.statusIndicatorLastRequestTime === null) {
+      this.statusIndicatorLastRequestTime = requestedAt;
+      this.statusIndicatorBurstCount = 0;
+      return 0;
+    }
+
+    const delta = requestedAt - this.statusIndicatorLastRequestTime;
+
+    if (delta <= STATUS_INDICATOR_BURST_THRESHOLD) {
+      this.statusIndicatorBurstCount += 1;
+    } else {
+      this.statusIndicatorBurstCount = 0;
+    }
+
+    this.statusIndicatorLastRequestTime = requestedAt;
+    return this.statusIndicatorBurstCount * STATUS_INDICATOR_STAGGER_STEP;
+  }
+
+  private fadeOutStatusIndicator(indicator: ActiveStatusIndicator): void {
+    if (indicator.timer) {
+      indicator.timer.remove();
+      indicator.timer = undefined;
+    }
+
+    if (!indicator.container || !indicator.container.active) {
+      this.destroyStatusIndicator(indicator);
+      return;
+    }
+
+    indicator.fadeTween = this.tweens.add({
+      targets: indicator.container,
+      alpha: { from: indicator.container.alpha, to: 0 },
+      scaleX: { from: indicator.container.scaleX, to: 0.95 },
+      scaleY: { from: indicator.container.scaleY, to: 0.95 },
+      duration: STATUS_INDICATOR_FADE_DURATION,
+      ease: 'Cubic.easeIn',
+      onComplete: () => this.destroyStatusIndicator(indicator)
+    });
+  }
+
+  private destroyStatusIndicator(indicator: ActiveStatusIndicator, suppressQueueProcessing: boolean = false): void {
+    if (indicator.timer) {
+      indicator.timer.remove();
+      indicator.timer = undefined;
+    }
+
+    if (indicator.introTween) {
+      indicator.introTween.stop();
+      indicator.introTween = undefined;
+    }
+
+    if (indicator.fadeTween) {
+      indicator.fadeTween.stop();
+      indicator.fadeTween = undefined;
+    }
+
+    const index = this.statusIndicators.indexOf(indicator);
+    if (index !== -1) {
+      this.statusIndicators.splice(index, 1);
+    }
+
+    try {
+      indicator.container.destroy();
+    } catch (_e) {
+      // Ignore destruction errors
+    }
+
+    if (!suppressQueueProcessing) {
+      this.layoutStatusIndicators();
+      this.processStatusIndicatorQueue();
+    }
+  }
+
+  private clearStatusIndicators(): void {
+    this.statusIndicatorQueue = [];
+    this.statusIndicatorLastRequestTime = null;
+    this.statusIndicatorBurstCount = 0;
+
+    while (this.statusIndicators.length > 0) {
+      const indicator = this.statusIndicators.pop();
+      if (indicator) {
+        this.destroyStatusIndicator(indicator, true);
+      }
+    }
+
+    this.layoutStatusIndicators();
   }
 
   private cleanupProjectileAfterHit(): void {
