@@ -203,6 +203,11 @@ export class SlingshotScene extends Phaser.Scene {
     this.bonusStageActive = false;
     this.consecutiveHits = 0;
     this.streakMultiplier = 1;
+    
+    // Refresh multiplier display to hide x1 on reset
+    if (this.streakMultiplierText) {
+      this.refreshMultiplierDisplay();
+    }
 
     this.currentRound = 1;
     this.targetsInRound = 1;
@@ -3282,7 +3287,7 @@ export class SlingshotScene extends Phaser.Scene {
       // Show multiplier text with correct value
       this.streakMultiplierText.setVisible(true);
       this.streakMultiplierText.setText(`x${this.streakMultiplier}`);
-      console.log(`[MULTIPLIER] Showing multiplier: x${this.streakMultiplier}`);
+      console.log(`[MULTIPLIER] Showing multiplier: x${this.streakMultiplier} (visible: true, text set)`);
     } else {
       // Hide multiplier text when at x1 base
       this.streakMultiplierText.setVisible(false);
@@ -3290,7 +3295,7 @@ export class SlingshotScene extends Phaser.Scene {
       // Reset scale and color to prevent lingering animations
       this.streakMultiplierText.setScale(1.0);
       this.streakMultiplierText.setColor('#ffaa00'); // Original orange color
-      console.log('[MULTIPLIER] Hiding base multiplier (x1)');
+      console.log('[MULTIPLIER] Hiding base multiplier (visible: false, text cleared, scale/color reset)');
     }
   }
 
@@ -3556,9 +3561,9 @@ export class SlingshotScene extends Phaser.Scene {
     if (this.streakCounterText) {
       this.streakCounterText.setText('Streak: 0');
     }
-    if (this.streakMultiplierText) {
-      this.streakMultiplierText.setText('x1');
-    }
+    
+    // Use centralized method to hide multiplier text (no x1 should show)
+    this.refreshMultiplierDisplay();
 
     console.log('[SEQUENCE] Streak reset complete - consecutiveHits: 0, multiplier: 1x');
 
@@ -3590,6 +3595,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.clearJoypadState();
     
     this.clearPowderTransactionFeedback();
+    
+    // Hide multiplier display on game over
+    this.refreshMultiplierDisplay();
     
     // Stop all active projectiles
     this.activeProjectiles.forEach((projectile) => {
