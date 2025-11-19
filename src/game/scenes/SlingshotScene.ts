@@ -2129,11 +2129,24 @@ export class SlingshotScene extends Phaser.Scene {
     
     const projectile = this.currentProjectile;
     
+    // Guard against double-spawn of dust particles
+    if (projectile.fadingOut || projectile.shouldDestroy) {
+      console.log('[GROUND-FADE] Projectile already marked for cleanup, skipping dust FX');
+      return;
+    }
+    
     // Register as miss
     this.missesInSequence++;
 
     // Handle miss mechanics (reset streaks/bonus)
     this.onMiss();
+
+    // Create particle burst at impact location
+    if (projectile.sprite) {
+      const impactX = projectile.sprite.x;
+      const impactY = projectile.sprite.y;
+      this.createGroundImpactParticles(impactX, impactY);
+    }
 
     try {
       // Stop physics immediately
@@ -2247,10 +2260,10 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private createGroundImpactParticles(x: number, y: number): void {
-    console.log('[PARTICLES] Creating ground impact particle burst at', x, y);
+    console.log('[GROUND-IMPACT] Creating ground impact particle burst at', x, y);
     
-    // Create temporary particle texture for dust effect
-    const dustKey = 'dust_particle';
+    // Cache particle texture for dust effect to avoid regenerating graphics
+    const dustKey = 'dust_particle_brown';
     if (!this.textures.exists(dustKey)) {
       const graphics = this.add.graphics();
       graphics.fillStyle(0x8B7355, 1);
@@ -2271,6 +2284,7 @@ export class SlingshotScene extends Phaser.Scene {
     });
     
     particles.emitParticleAt(x, y, 8);
+    console.log('[GROUND-IMPACT] Dust burst emitted at', x, y);
     
     this.time.delayedCall(400, () => {
       try {
@@ -2860,11 +2874,24 @@ export class SlingshotScene extends Phaser.Scene {
 
     console.log('[GROUND-FADE] Destroying active projectile immediately');
     
+    // Guard against double-spawn of dust particles
+    if (projectile.fadingOut || projectile.shouldDestroy) {
+      console.log('[GROUND-FADE] Active projectile already marked for cleanup, skipping dust FX');
+      return;
+    }
+    
     // Register as miss
     this.missesInSequence++;
 
     // Handle miss mechanics (reset streaks/bonus)
     this.onMiss();
+
+    // Create particle burst at impact location
+    if (projectile.sprite) {
+      const impactX = projectile.sprite.x;
+      const impactY = projectile.sprite.y;
+      this.createGroundImpactParticles(impactX, impactY);
+    }
 
     try {
       // Stop physics immediately
