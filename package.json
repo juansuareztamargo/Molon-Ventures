@@ -14,7 +14,15 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,js,jsx,json,css,scss,md}\"",
     "type-check": "tsc --noEmit"
   },
-  "keywords": ["phaser", "typescript", "vite", "game", "slingshot", "target-system", "physics"],
+  "keywords": [
+    "phaser",
+    "typescript",
+    "vite",
+    "game",
+    "slingshot",
+    "target-system",
+    "physics"
+  ],
   "author": "",
   "license": "MIT",
   "repository": {
