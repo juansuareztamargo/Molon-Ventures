@@ -620,6 +620,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.updateRoundText();
     this.updateSequenceProgressText();
     
+    // Ensure multiplier display is hidden at sequence start
+    this.refreshMultiplierDisplay();
+    
     if (!this.firstSequenceStarted) {
       this.firstSequenceStarted = true;
     }
@@ -2397,7 +2400,7 @@ export class SlingshotScene extends Phaser.Scene {
     
     // Update streak displays
     this.streakCounterText.setText('Streak: 0');
-    this.streakMultiplierText.setText('x1');
+    this.refreshMultiplierDisplay();
     
     // Flash red briefly to indicate streak broken
     this.resetStreakDisplay();
@@ -2408,28 +2411,24 @@ export class SlingshotScene extends Phaser.Scene {
     
     if (this.consecutiveHits === 5) {
       this.streakMultiplier = 2;
-      this.streakMultiplierText.setText('x2');
       this.showStatusIndicator('2x MULTIPLIER', '#ffff00', 'STREAK');
       this.applyMultiplierUpgradeCue();
     } else if (this.consecutiveHits === 10) {
       this.streakMultiplier = 3;
-      this.streakMultiplierText.setText('x3');
       this.showStatusIndicator('3x MULTIPLIER', '#ffff00', 'STREAK');
       this.applyMultiplierUpgradeCue();
     } else if (this.consecutiveHits === 25) {
       this.streakMultiplier = 4;
-      this.streakMultiplierText.setText('x4');
       this.showStatusIndicator('4x MULTIPLIER', '#ffff00', 'STREAK');
       this.applyMultiplierUpgradeCue();
     } else if (this.consecutiveHits === 50) {
       this.streakMultiplier = 5;
-      this.streakMultiplierText.setText('x5');
       this.showStatusIndicator('5x MULTIPLIER', '#ffff00', 'STREAK');
       this.applyMultiplierUpgradeCue();
-    } else if (previousMultiplier === this.streakMultiplier) {
-      // Update multiplier text if it changed from calculation
-      this.streakMultiplierText.setText(`x${this.streakMultiplier}`);
     }
+    
+    // Always refresh display after multiplier changes
+    this.refreshMultiplierDisplay();
   }
 
   private showStatusIndicator(mainText: string, color: string, subText: string): void {
@@ -2938,6 +2937,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.streakMultiplierText.setOrigin(0.5, 0);
     this.streakMultiplierText.setDepth(100);
     this.streakMultiplierText.setStroke('#000000', 2);
+    
+    // Initialize multiplier display as hidden (base x1 should not show)
+    this.refreshMultiplierDisplay();
 
     this.instructionsText = this.add.text(
       width / 2,
@@ -3188,39 +3190,65 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private applyStreakIncrementCue(): void {
-    this.tweens.add({
-      targets: this.streakMultiplierText,
-      scale: { from: 1.0, to: 1.15 },
-      duration: 300,
-      ease: 'Back.easeOut'
-    });
+    // Only animate if multiplier display is visible (multiplier > 1)
+    if (this.streakMultiplierText.visible) {
+      this.tweens.add({
+        targets: this.streakMultiplierText,
+        scale: { from: 1.0, to: 1.15 },
+        duration: 300,
+        ease: 'Back.easeOut'
+      });
+    }
   }
 
   private applyMultiplierUpgradeCue(): void {
-    this.tweens.add({
-      targets: this.streakMultiplierText,
-      scale: { from: 1.0, to: 1.4 },
-      duration: 500,
-      ease: 'Elastic.easeOut',
-      easeParams: [1.5, 0.5]
-    });
+    // Only animate if multiplier display is visible (multiplier > 1)
+    if (this.streakMultiplierText.visible) {
+      this.tweens.add({
+        targets: this.streakMultiplierText,
+        scale: { from: 1.0, to: 1.4 },
+        duration: 500,
+        ease: 'Elastic.easeOut',
+        easeParams: [1.5, 0.5]
+      });
 
-    // Flash to bright color
-    const originalColor = '#ffaa00'; // Orange - original multiplier color
-    this.streakMultiplierText.setColor('#ffff00');
+      // Flash to bright color
+      const originalColor = '#ffaa00'; // Orange - original multiplier color
+      this.streakMultiplierText.setColor('#ffff00');
 
-    this.time.delayedCall(250, () => {
-      this.streakMultiplierText.setColor(originalColor);
-    });
+      this.time.delayedCall(250, () => {
+        this.streakMultiplierText.setColor(originalColor);
+      });
+    }
+  }
+
+  private refreshMultiplierDisplay(): void {
+    if (this.streakMultiplier > 1) {
+      // Show multiplier text with correct value
+      this.streakMultiplierText.setVisible(true);
+      this.streakMultiplierText.setText(`x${this.streakMultiplier}`);
+      console.log(`[MULTIPLIER] Showing multiplier: x${this.streakMultiplier}`);
+    } else {
+      // Hide multiplier text when at x1 base
+      this.streakMultiplierText.setVisible(false);
+      this.streakMultiplierText.setText('');
+      // Reset scale and color to prevent lingering animations
+      this.streakMultiplierText.setScale(1.0);
+      this.streakMultiplierText.setColor('#ffaa00'); // Original orange color
+      console.log('[MULTIPLIER] Hiding base multiplier (x1)');
+    }
   }
 
   private resetStreakDisplay(): void {
-    const originalColor = '#ffaa00'; // Orange - original multiplier color
-    this.streakMultiplierText.setColor('#ff0000');
+    // Only animate if multiplier display is visible (multiplier > 1)
+    if (this.streakMultiplierText.visible) {
+      const originalColor = '#ffaa00'; // Orange - original multiplier color
+      this.streakMultiplierText.setColor('#ff0000');
 
-    this.time.delayedCall(300, () => {
-      this.streakMultiplierText.setColor(originalColor);
-    });
+      this.time.delayedCall(300, () => {
+        this.streakMultiplierText.setColor(originalColor);
+      });
+    }
   }
 
   private updateRoundText(): void {
