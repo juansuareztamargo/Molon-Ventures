@@ -1598,14 +1598,14 @@ export class SlingshotScene extends Phaser.Scene {
     
     // Interpolate base trajectory thickness from 2px to 6px based on power
     const baseLineWidth = 2 + powerRatio * 4;
-    // Add +1px when snapped for visual distinction
-    const lineWidth = isSnapped ? baseLineWidth + 1 : baseLineWidth;
     
-    console.log(`[JOYPAD-DEBUG] Trajectory width: ${lineWidth.toFixed(2)}px (power: ${(powerRatio * 100).toFixed(0)}%, snapped: ${isSnapped})`);
-
-    this.joypad.trajectoryLine.lineStyle(lineWidth, lineColor, lineAlpha);
-    this.joypad.trajectoryLine.beginPath();
-    this.joypad.trajectoryLine.moveTo(px, py);
+    // Calculate gradient widths: taper from thin at origin to thick at target
+    const startWidth = baseLineWidth * 0.85; // 15% thinner at origin
+    const endWidth = baseLineWidth * 1.15; // 15% thicker at target
+    // Add +1px when snapped for visual distinction to the end width
+    const finalEndWidth = isSnapped ? endWidth + 1 : endWidth;
+    
+    console.log(`[JOYPAD-DEBUG] Trajectory gradient: start=${startWidth.toFixed(2)}px, end=${finalEndWidth.toFixed(2)}px (power: ${(powerRatio * 100).toFixed(0)}%, snapped: ${isSnapped})`);
 
     // Draw trajectory but stop at circle boundary if aiming at a target
     let trajectoryLength = maxSteps;
@@ -1632,19 +1632,32 @@ export class SlingshotScene extends Phaser.Scene {
       }
     }
 
+    // Store trajectory points for gradient drawing
+    const points: { x: number; y: number }[] = [];
+    points.push({ x: px, y: py });
+
     for (let i = 0; i < trajectoryLength; i++) {
       px += vx * timeStep;
       py += drawVy * timeStep;
       drawVy += gravity * timeStep;
-
-      this.joypad.trajectoryLine.lineTo(px, py);
+      points.push({ x: px, y: py });
 
       if (px < 0 || px > this.scale.width || py > this.scale.height) {
         break;
       }
     }
 
-    this.joypad.trajectoryLine.strokePath();
+    // Draw trajectory with gradient width by drawing segments
+    for (let i = 0; i < points.length - 1; i++) {
+      const progress = i / (points.length - 1); // Normalized progress (0 to 1)
+      const segmentWidth = startWidth + (finalEndWidth - startWidth) * progress;
+      
+      this.joypad.trajectoryLine.lineStyle(segmentWidth, lineColor, lineAlpha);
+      this.joypad.trajectoryLine.beginPath();
+      this.joypad.trajectoryLine.moveTo(points[i].x, points[i].y);
+      this.joypad.trajectoryLine.lineTo(points[i + 1].x, points[i + 1].y);
+      this.joypad.trajectoryLine.strokePath();
+    }
 
     // Draw snap indicator if snapped to target
     if (isSnapped && snappedTargetData) {
