@@ -657,30 +657,61 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private findValidCirclePosition(screenWidth: number, screenHeight: number, radius: number): { x: number; y: number } {
+    const minY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MIN;
+    const maxY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MAX;
+
+    // Random attempts
     for (let attempt = 0; attempt < CIRCLE_SPACING.MAX_POSITIONING_ATTEMPTS; attempt++) {
       const x = CIRCLE_SPACING.SCREEN_PADDING + Math.random() * (screenWidth - 2 * CIRCLE_SPACING.SCREEN_PADDING);
-      const minY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MIN;
-      const maxY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MAX;
       const y = minY + Math.random() * (maxY - minY);
       
       if (this.isValidCirclePosition(x, y, radius, CIRCLE_SPACING.MIN_CIRCLE_DISTANCE)) {
-        console.log(`[CIRCLE] Valid position found on attempt ${attempt + 1}: (${x.toFixed(0)}, ${y.toFixed(0)})`);
+        const nearestDistance = this.getDistanceToNearestNeighbor(x, y);
+        console.log(`[CIRCLE] Valid position found on attempt ${attempt + 1}: (${x.toFixed(0)}, ${y.toFixed(0)}), nearest neighbor: ${nearestDistance.toFixed(0)}px`);
         return { x, y };
       }
     }
 
-    // Fallback: use deterministic horizontal slot positioning
+    // Fallback: use deterministic horizontal slot positioning with validation
     console.log(`[CIRCLE] Using fallback position after ${CIRCLE_SPACING.MAX_POSITIONING_ATTEMPTS} attempts`);
-    const slotIndex = this.targets.length;
     const usableWidth = screenWidth - 2 * CIRCLE_SPACING.SCREEN_PADDING;
-    const slotWidth = usableWidth / Math.max(this.targetsInRound, 3);
-    const fallbackX = CIRCLE_SPACING.SCREEN_PADDING + (slotIndex * slotWidth) + (slotWidth / 2);
-    const fallbackY = screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MIN + (screenHeight * (CIRCLE_SPACING.SPAWN_HEIGHT_MAX - CIRCLE_SPACING.SPAWN_HEIGHT_MIN) / 2);
-    const clampedX = Phaser.Math.Clamp(fallbackX, CIRCLE_SPACING.SCREEN_PADDING + radius, screenWidth - CIRCLE_SPACING.SCREEN_PADDING - radius);
-    const clampedY = Phaser.Math.Clamp(fallbackY, CIRCLE_SPACING.SCREEN_PADDING + radius, screenHeight * CIRCLE_SPACING.SPAWN_HEIGHT_MAX - radius);
-    
-    console.log(`[CIRCLE] Fallback slot index: ${slotIndex}, position: (${clampedX.toFixed(0)}, ${clampedY.toFixed(0)})`);
+    const numSlots = this.targetsInRound;
+    const slotWidth = usableWidth / numSlots;
+
+    // Try each slot position with validation
+    for (let slotIndex = 0; slotIndex < numSlots; slotIndex++) {
+      const candidateX = CIRCLE_SPACING.SCREEN_PADDING + (slotIndex * slotWidth) + (slotWidth / 2);
+      const candidateY = minY + (maxY - minY) / 2;
+      
+      if (this.isValidCirclePosition(candidateX, candidateY, radius, CIRCLE_SPACING.MIN_CIRCLE_DISTANCE)) {
+        const clampedX = Phaser.Math.Clamp(candidateX, CIRCLE_SPACING.SCREEN_PADDING + radius, screenWidth - CIRCLE_SPACING.SCREEN_PADDING - radius);
+        const clampedY = Phaser.Math.Clamp(candidateY, minY + radius, maxY - radius);
+        const nearestDistance = this.getDistanceToNearestNeighbor(clampedX, clampedY);
+        console.log(`[CIRCLE] Fallback slot ${slotIndex + 1}/${numSlots} valid, position: (${clampedX.toFixed(0)}, ${clampedY.toFixed(0)}), nearest neighbor: ${nearestDistance.toFixed(0)}px`);
+        return { x: clampedX, y: clampedY };
+      }
+    }
+
+    // Final safeguard: place at center if all positions fail
+    console.log(`[CIRCLE] FALLBACK FAILED: No valid position found in ${numSlots} slots, placing at center`);
+    const centerX = screenWidth / 2;
+    const centerY = (minY + maxY) / 2;
+    const clampedX = Phaser.Math.Clamp(centerX, CIRCLE_SPACING.SCREEN_PADDING + radius, screenWidth - CIRCLE_SPACING.SCREEN_PADDING - radius);
+    const clampedY = Phaser.Math.Clamp(centerY, minY + radius, maxY - radius);
+    const nearestDistance = this.getDistanceToNearestNeighbor(clampedX, clampedY);
+    console.log(`[CIRCLE] Emergency center placement: (${clampedX.toFixed(0)}, ${clampedY.toFixed(0)}), nearest neighbor: ${nearestDistance.toFixed(0)}px`);
     return { x: clampedX, y: clampedY };
+  }
+
+  private getDistanceToNearestNeighbor(x: number, y: number): number {
+    let minDistance = Infinity;
+    for (const target of this.targets) {
+      const dx = x - target.fixedX;
+      const dy = y - target.fixedY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      minDistance = Math.min(minDistance, distance);
+    }
+    return minDistance === Infinity ? 0 : minDistance;
   }
 
   private isValidCirclePosition(x: number, y: number, radius: number, minDistance: number): boolean {
