@@ -284,6 +284,31 @@ export class SlingshotScene extends Phaser.Scene {
       }
     }
 
+    // CRITICAL FIX: Remove zombie projectiles stuck with shouldDestroy flag
+    for (let i = this.activeProjectiles.length - 1; i >= 0; i--) {
+      const projectile = this.activeProjectiles[i]
+
+      if (!projectile) {
+        this.activeProjectiles.splice(i, 1)
+        continue
+      }
+
+      if (projectile.shouldDestroy) {
+        console.log('[CLEANUP] Removing zombie projectile with shouldDestroy flag from array')
+        try {
+          this.cleanupActiveProjectile(projectile, i)
+        } catch (error) {
+          console.error('[CLEANUP] Error cleaning up zombie projectile:', error)
+          const existingIndex = this.activeProjectiles.indexOf(projectile)
+          if (existingIndex !== -1) {
+            this.activeProjectiles.splice(existingIndex, 1)
+          }
+        }
+        console.log(`[CLEANUP] Zombie projectile removed, ${this.activeProjectiles.length} remaining`)
+        continue
+      }
+    }
+
     // DIAGNOSTIC: Check all active projectiles
     for (let i = this.activeProjectiles.length - 1; i >= 0; i--) {
       const projectile = this.activeProjectiles[i]
