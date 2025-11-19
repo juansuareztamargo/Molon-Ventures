@@ -366,8 +366,11 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
       // Keep particle emitter following projectile and rotate arrow to velocity direction
-      if (this.currentProjectile && this.currentProjectile.particles && !this.currentProjectile.fadingOut) {
-        this.currentProjectile.particles.setPosition(sprite.x, sprite.y);
+      if (this.currentProjectile) {
+        const trailEmitter = this.currentProjectile.particles;
+        if (trailEmitter && trailEmitter.manager && !this.currentProjectile.fadingOut) {
+          trailEmitter.setPosition(sprite.x, sprite.y);
+        }
       }
 
       // Rotate arrow to point in direction of travel during flight (ALWAYS update when moving)
@@ -435,8 +438,9 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
       // Keep particle emitter following projectile
-      if (projectile.particles && !projectile.fadingOut) {
-        projectile.particles.setPosition(sprite.x, sprite.y);
+      const trailEmitter = projectile.particles;
+      if (trailEmitter && trailEmitter.manager && !projectile.fadingOut) {
+        trailEmitter.setPosition(sprite.x, sprite.y);
       }
 
       // Rotate arrow to point in direction of travel during flight
@@ -1029,13 +1033,7 @@ export class SlingshotScene extends Phaser.Scene {
       graphics.destroy();
     }
 
-    if (!this.textures.exists('trail-particle')) {
-      const graphics = this.add.graphics();
-      graphics.fillStyle(0x888888, 1);
-      graphics.fillCircle(2, 2, 2);
-      graphics.generateTexture('trail-particle', 4, 4);
-      graphics.destroy();
-    }
+    this.ensureTrailTexture();
 
     const sprite = this.physics.add.sprite(x, y, 'projectile-arrow');
     console.log(`[SHOOT-DEBUG] Sprite created at (${sprite.x.toFixed(2)}, ${sprite.y.toFixed(2)})`);
@@ -1054,19 +1052,6 @@ export class SlingshotScene extends Phaser.Scene {
     ring.setStrokeStyle(3, TARGET_COLORS.RED, 0.7);
     ring.setDepth(59);
 
-    // Create particle emitter for trail (not active yet, will activate on launch)
-    const particles = this.add.particles(x, y, 'trail-particle', {
-      speed: 0,
-      scale: { start: 0.4, end: 0 },
-      alpha: { start: 0.4, end: 0 },
-      lifespan: 300,
-      frequency: 50,
-      blendMode: 'NORMAL',
-    });
-    particles.setDepth(58);
-    particles.stop();
-    console.log('[PARTICLES] Grey trail particle emitter created (subtle, 300ms lifespan)');
-
     this.currentProjectile = {
       sprite,
       ring,
@@ -1074,9 +1059,84 @@ export class SlingshotScene extends Phaser.Scene {
       fadingOut: false,
       hasCollided: false,
       shouldDestroy: false,
-      particles,
     };
+
+    this.createTrailEmitter(this.currentProjectile);
     console.log('[SHOOT-DEBUG] Projectile ready for aiming');
+  }
+
+  private ensureTrailTexture(): void {
+    if (!this.textures.exists('trail-particle')) {
+      const graphics = this.add.graphics();
+      graphics.fillStyle(0x888888, 1);
+      graphics.fillCircle(2, 2, 2);
+      graphics.generateTexture('trail-particle', 4, 4);
+      graphics.destroy();
+    }
+  }
+
+  private createTrailEmitter(projectile: ProjectileData): void {
+    if (!projectile) {
+      return;
+    }
+
+    this.ensureTrailTexture();
+
+    const emitter = this.add.particles(projectile.sprite.x, projectile.sprite.y, 'trail-particle', {
+      speed: 0,
+      scale: { start: 0.4, end: 0 },
+      alpha: { start: 0.4, end: 0 },
+      lifespan: 300,
+      frequency: 50,
+      blendMode: 'NORMAL',
+    });
+
+    emitter.setDepth(58);
+    emitter.stop();
+    projectile.particles = emitter;
+    console.log('[PARTICLES] Grey trail particle emitter created (subtle, 300ms lifespan)');
+  }
+
+  private startTrailEmitter(projectile: ProjectileData): void {
+    if (!projectile) {
+      return;
+    }
+
+    if (!projectile.particles) {
+      this.createTrailEmitter(projectile);
+    }
+
+    const emitter = projectile.particles;
+    if (!emitter || !emitter.manager) {
+      return;
+    }
+
+    emitter.setPosition(projectile.sprite.x, projectile.sprite.y);
+    emitter.emitParticleAt(projectile.sprite.x, projectile.sprite.y);
+    emitter.start();
+    console.log('[PARTICLES] Trail started');
+  }
+
+  private stopTrailEmitter(projectile: ProjectileData, reason: string = 'cleanup'): void {
+    if (!projectile.particles) {
+      return;
+    }
+
+    const emitter = projectile.particles;
+    projectile.particles = undefined;
+
+    try {
+      emitter.stop();
+    } catch (error) {
+      console.log('[PARTICLES] Error stopping trail emitter:', error);
+    }
+
+    try {
+      emitter.destroy();
+      console.log(`[PARTICLES] Trail stopped (${reason})`);
+    } catch (error) {
+      console.log('[PARTICLES] Error destroying trail emitter:', error);
+    }
   }
 
   private setupInput(): void {
@@ -1584,15 +1644,7 @@ export class SlingshotScene extends Phaser.Scene {
     const angle = Math.atan2(velocityY, velocityX);
     this.currentProjectile.sprite.setRotation(angle);
 
-    // Start particle trail
-    if (this.currentProjectile.particles) {
-      this.currentProjectile.particles.emitParticleAt(
-        this.currentProjectile.sprite.x,
-        this.currentProjectile.sprite.y
-      );
-      this.currentProjectile.particles.start();
-      console.log('[SHOOT-DEBUG] Trail particle emitter started');
-    }
+    this.startTrailEmitter(this.currentProjectile);
 
     if (!this.currentProjectile) {
       return false;
@@ -1746,23 +1798,13 @@ export class SlingshotScene extends Phaser.Scene {
         console.log('[OFF-SCREEN] Error stopping physics:', error);
       }
 
-      // Stop trail particles immediately
-      if (projectile.particles) {
-        try {
-          projectile.particles.stop();
-        } catch (_e) {
-          // Ignore
-        }
-      }
+      this.stopTrailEmitter(projectile, 'offscreen-current');
 
       // Destroy sprite IMMEDIATELY (don't just hide it)
       console.log('[OFF-SCREEN] Destroying projectile and ring');
       try {
         sprite.destroy();
         projectile.ring.destroy();
-        if (projectile.particles) {
-          projectile.particles.destroy();
-        }
       } catch (error) {
         console.log('[OFF-SCREEN] Error destroying objects:', error);
       }
@@ -1849,15 +1891,8 @@ export class SlingshotScene extends Phaser.Scene {
         }
       }
       
-      // Stop trail particles
-      if (projectile.particles) {
-        console.log(`[GROUND-DIAGNOSTIC] Stopping particles`);
-        try {
-          projectile.particles.stop();
-        } catch (_e) {
-          // Ignore
-        }
-      }
+      console.log(`[GROUND-DIAGNOSTIC] Stopping particles`);
+      this.stopTrailEmitter(projectile, 'ground-impact-current');
       
       // Fade out sprite and ring over 400ms
       if (projectile.sprite) {
@@ -1893,10 +1928,7 @@ export class SlingshotScene extends Phaser.Scene {
       try {
         if (projectile.sprite) projectile.sprite.destroy();
         if (projectile.ring) projectile.ring.destroy();
-        if (projectile.particles) {
-          projectile.particles.stop();
-          projectile.particles.destroy();
-        }
+        this.stopTrailEmitter(projectile, 'ground-impact-current-failsafe');
         this.currentProjectile = undefined;
         this.slingshotEnabled = true;
       } catch (_e2) {
@@ -1958,15 +1990,8 @@ export class SlingshotScene extends Phaser.Scene {
         }
       }
       
-      // Stop trail particles
-      if (projectile.particles) {
-        console.log(`[GROUND-DIAGNOSTIC] Stopping active projectile particles`);
-        try {
-          projectile.particles.stop();
-        } catch (_e) {
-          // Ignore
-        }
-      }
+      console.log(`[GROUND-DIAGNOSTIC] Stopping active projectile particles`);
+      this.stopTrailEmitter(projectile, 'ground-impact-active');
       
       // Fade out sprite and ring over 400ms
       if (projectile.sprite) {
@@ -2002,10 +2027,7 @@ export class SlingshotScene extends Phaser.Scene {
       try {
         if (projectile.sprite) projectile.sprite.destroy();
         if (projectile.ring) projectile.ring.destroy();
-        if (projectile.particles) {
-          projectile.particles.stop();
-          projectile.particles.destroy();
-        }
+        this.stopTrailEmitter(projectile, 'ground-impact-active-failsafe');
         this.activeProjectiles.splice(index, 1);
         this.enableSlingshot();
       } catch (_e2) {
@@ -2048,22 +2070,12 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[GROUND-FADE] Error stopping physics:', error);
     }
 
-    // Stop trail particles immediately
-    if (projectile.particles) {
-      try {
-        projectile.particles.stop();
-      } catch (_e) {
-        // Ignore
-      }
-    }
+    this.stopTrailEmitter(projectile, 'ground-immediate-current');
 
     // Destroy sprite and ring immediately
     try {
       projectile.sprite.destroy();
       projectile.ring.destroy();
-      if (projectile.particles) {
-        projectile.particles.destroy();
-      }
     } catch (error) {
       console.log('[GROUND-FADE] Error destroying objects:', error);
     }
@@ -2091,15 +2103,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     const projectile = this.currentProjectile;
 
-    try {
-      console.log(`[GROUND-DIAGNOSTIC] Destroying particles`);
-      if (projectile.particles) {
-        projectile.particles.destroy();
-        projectile.particles = null;
-      }
-    } catch (_e) {
-      console.log(`[GROUND-DIAGNOSTIC] Error destroying particles:`, _e);
-    }
+    console.log(`[GROUND-DIAGNOSTIC] Destroying particles`);
+    this.stopTrailEmitter(projectile, 'ground-complete-current');
 
     try {
       console.log(`[GROUND-DIAGNOSTIC] Destroying sprite and ring`);
@@ -2135,15 +2140,8 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
-    try {
-      console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile particles`);
-      if (projectile.particles) {
-        projectile.particles.destroy();
-        projectile.particles = null;
-      }
-    } catch (_e) {
-      console.log(`[GROUND-DIAGNOSTIC] Error destroying active projectile particles:`, _e);
-    }
+    console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile particles`);
+    this.stopTrailEmitter(projectile, 'ground-complete-active');
 
     try {
       console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile sprite and ring`);
@@ -2509,15 +2507,7 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[CLEANUP] Error disabling physics:', error);
     }
 
-    // Stop and destroy particle emitter
-    if (projectile.particles) {
-      try {
-        projectile.particles.stop();
-        projectile.particles.destroy();
-      } catch (_e) {
-        // Ignore particle cleanup errors
-      }
-    }
+    this.stopTrailEmitter(projectile, 'hit-current');
 
     // Destroy sprite and ring
     try {
@@ -2578,15 +2568,7 @@ export class SlingshotScene extends Phaser.Scene {
         // Ignore if already destroyed
       }
       
-      // Clean up particle emitter
-      if (projectile.particles) {
-        try {
-          projectile.particles.stop();
-          projectile.particles.destroy();
-        } catch (_e) {
-          // Ignore particle cleanup errors
-        }
-      }
+      this.stopTrailEmitter(projectile, 'prepare-next-shot-current');
       
       this.currentProjectile = undefined;
       console.log('[CLEANUP] Projectile destroyed and reference cleared');
@@ -2662,15 +2644,7 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[CLEANUP] Error disabling physics:', error);
     }
 
-    // Stop and destroy particle emitter
-    if (projectile.particles) {
-      try {
-        projectile.particles.stop();
-        projectile.particles.destroy();
-      } catch (_e) {
-        // Ignore particle cleanup errors
-      }
-    }
+    this.stopTrailEmitter(projectile, 'hit-active');
 
     // Destroy sprite and ring
     try {
@@ -2770,15 +2744,7 @@ export class SlingshotScene extends Phaser.Scene {
         console.log('[OFF-SCREEN] Error stopping physics:', error);
       }
 
-      // Stop trail particles immediately
-      if (projectile.particles) {
-        try {
-          projectile.particles.stop();
-          projectile.particles.destroy();
-        } catch (_e) {
-          // Ignore
-        }
-      }
+      this.stopTrailEmitter(projectile, 'offscreen-active');
 
       // Destroy sprite IMMEDIATELY
       console.log('[OFF-SCREEN] Destroying projectile and ring');
@@ -2841,15 +2807,7 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[GROUND-FADE] Error stopping physics:', error);
     }
 
-    // Stop trail particles immediately
-    if (projectile.particles) {
-      try {
-        projectile.particles.stop();
-        projectile.particles.destroy();
-      } catch (_e) {
-        // Ignore
-      }
-    }
+    this.stopTrailEmitter(projectile, 'ground-immediate-active');
 
     // Destroy sprite and ring immediately
     try {
@@ -3561,10 +3519,7 @@ export class SlingshotScene extends Phaser.Scene {
         }
         projectile.sprite.destroy();
         projectile.ring.destroy();
-        if (projectile.particles) {
-          projectile.particles.stop();
-          projectile.particles.destroy();
-        }
+        this.stopTrailEmitter(projectile, 'game-over-active');
       } catch (_e) {
         // Ignore cleanup errors
       }
