@@ -31,6 +31,8 @@ interface JoypadUI {
   centerY: number;
   offsetX: number;
   offsetY: number;
+  costText?: Phaser.GameObjects.Text;
+  costTween?: Phaser.Tweens.Tween;
 }
 
 interface ProjectileData {
@@ -88,6 +90,7 @@ export class SlingshotScene extends Phaser.Scene {
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private shotsInCurrentSequence: number = 0;
+  private shotBlockedDueToPowder: boolean = false;
 
   // Advanced powder mechanics
   private consecutivePerfects: number = 0;
@@ -169,6 +172,7 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     if (this.joypad) {
+      this.fadeOutJoypadCost('resetState', true);
       this.destroyJoypad();
     }
 
@@ -1280,6 +1284,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     if (!this.joypad || !this.currentProjectile || waitingForSequence) {
       console.log('[JOYPAD-DEBUG] Launch cancelled (missing joypad/projectile or waiting for sequence)');
+      this.fadeOutJoypadCost('cancelled', true);
       this.destroyJoypad();
       this.prepareNextShot();
       this.resetDragState();
@@ -1297,8 +1302,12 @@ export class SlingshotScene extends Phaser.Scene {
     
     if (launched) {
       console.log('[JOYPAD-DEBUG] Projectile launched successfully');
+      // Fade out cost label on successful launch
+      this.fadeOutJoypadCost('successful launch');
     } else {
       console.log('[JOYPAD-DEBUG] Launch failed');
+      const reason = this.shotBlockedDueToPowder ? 'insufficient powder' : 'launch failed';
+      this.fadeOutJoypadCost(reason, this.shotBlockedDueToPowder);
     }
     
     // Clear joypad UI immediately after shot
@@ -1329,6 +1338,7 @@ export class SlingshotScene extends Phaser.Scene {
     try {
       // Destroy joypad container
       if (this.joypad) {
+        this.fadeOutJoypadCost('clearJoypadState', true);
         this.destroyJoypad();
         console.log('[INPUT] Joypad container destroyed');
       }
@@ -1386,7 +1396,22 @@ export class SlingshotScene extends Phaser.Scene {
     const powerLine = this.add.graphics();
     const trajectoryLine = this.add.graphics();
 
-    container.add([base, powerLine, trajectoryLine, knob]);
+    // Calculate next shot cost (before powder is deducted)
+    const nextShotCost = this.shotsInCurrentSequence + 1;
+    
+    // Create cost text showing powder cost for this shot
+    const costText = this.add.text(x, centerY, `-${nextShotCost}`, {
+      fontSize: '28px',
+      color: '#ff3333',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+      align: 'center'
+    }).setOrigin(0.5, 0.5);
+    
+    costText.setDepth(56);
+
+    container.add([base, powerLine, trajectoryLine, knob, costText]);
     container.setDepth(55);
 
     this.joypad = {
@@ -1399,7 +1424,10 @@ export class SlingshotScene extends Phaser.Scene {
       centerY,
       offsetX: 0,
       offsetY: 0,
+      costText,
     };
+
+    console.log(`[JOYPAD] Cost label created: -${nextShotCost} powder`);
 
     if (this.currentProjectile) {
       this.currentProjectile.sprite.setPosition(x, centerY);
@@ -1622,6 +1650,81 @@ export class SlingshotScene extends Phaser.Scene {
     }
   }
 
+  private fadeOutJoypadCost(reason: string = 'default', immediate: boolean = false): void {
+    if (!this.joypad || !this.joypad.costText) {
+      return;
+    }
+
+    const joypad = this.joypad;
+    const { costText } = joypad;
+
+    if (!costText.active) {
+      joypad.costText = undefined;
+      if (joypad.costTween) {
+        joypad.costTween.stop();
+        joypad.costTween = undefined;
+      }
+      return;
+    }
+
+    if (joypad.costTween) {
+      if (!immediate) {
+        return;
+      }
+
+      joypad.costTween.stop();
+      joypad.costTween = undefined;
+    }
+
+    if (immediate) {
+      if (costText.parentContainer) {
+        costText.parentContainer.remove(costText);
+      }
+
+      try {
+        costText.destroy();
+      } catch (_error) {
+        // Ignore cleanup errors for cost text
+      }
+
+      joypad.costText = undefined;
+      console.log(`[JOYPAD] Cost label cleared immediately (${reason})`);
+      return;
+    }
+
+    if (costText.parentContainer) {
+      costText.parentContainer.remove(costText);
+      costText.x = joypad.centerX;
+      costText.y = joypad.centerY;
+    }
+
+    joypad.costTween = this.tweens.add({
+      targets: costText,
+      alpha: 0,
+      duration: 200,
+      ease: 'Quad.easeOut',
+      onComplete: () => {
+        try {
+          costText.destroy();
+        } catch (_error) {
+          // Ignore destruction errors
+        }
+
+        if (this.joypad && this.joypad.costText === costText) {
+          this.joypad.costText = undefined;
+          this.joypad.costTween = undefined;
+        }
+
+        console.log(`[JOYPAD] Cost label faded (${reason})`);
+      },
+      onStop: () => {
+        if (this.joypad && this.joypad.costTween) {
+          this.joypad.costTween = undefined;
+        }
+      },
+    });
+  }
+
   private destroyJoypad(): void {
     if (!this.joypad) return;
 
@@ -1650,6 +1753,8 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private launchProjectile(): boolean {
+    this.shotBlockedDueToPowder = false;
+
     if (!this.currentProjectile || !this.joypad) {
       return false;
     }
@@ -1669,6 +1774,7 @@ export class SlingshotScene extends Phaser.Scene {
     // Check if player has enough powder for next shot
     if (this.powder < nextShotCost) {
       console.log('[INPUT] Insufficient powder for shot. Have:', this.powder, 'Need:', nextShotCost);
+      this.shotBlockedDueToPowder = true;
       this.triggerGameOver();
       return false;
     }
@@ -1898,6 +2004,7 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[OFF-SCREEN] Projectile reference cleared');
 
       // Clear joypad and reset state
+      this.fadeOutJoypadCost('offscreen cleanup', true);
       this.destroyJoypad();
       this.resetDragState();
       
@@ -1910,6 +2017,7 @@ export class SlingshotScene extends Phaser.Scene {
       // Failsafe: force cleanup if any error occurs
       try {
         this.currentProjectile = undefined;
+        this.fadeOutJoypadCost('offscreen cleanup failsafe', true);
         this.destroyJoypad();
         this.resetDragState();
         this.enableSlingshot();
@@ -2185,6 +2293,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.currentProjectile = undefined;
     
     // Clear joypad and reset state
+    this.fadeOutJoypadCost('ground impact immediate', true);
     this.destroyJoypad();
     this.resetDragState();
     
@@ -2222,6 +2331,7 @@ export class SlingshotScene extends Phaser.Scene {
     console.log(`[GROUND-DIAGNOSTIC] Clearing currentProjectile reference`);
     this.currentProjectile = undefined;
     
+    this.fadeOutJoypadCost('ground fade complete', true);
     this.destroyJoypad();
     this.resetDragState();
     
@@ -2618,6 +2728,7 @@ export class SlingshotScene extends Phaser.Scene {
     
     // Reset state to allow next shot
     this.snappedVelocity = undefined;
+    this.fadeOutJoypadCost('cleanup', true);
     this.destroyJoypad();
     this.resetDragState();
     
