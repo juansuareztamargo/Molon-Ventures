@@ -69,6 +69,14 @@ interface ActiveStatusIndicator {
   fadeTween?: Phaser.Tweens.Tween;
 }
 
+interface RewardBreakdown {
+  baseAmount: number;
+  bonusAmount: number;
+  multiplier: number;
+  intermediateAfterBonus: number;
+  finalTotal: number;
+}
+
 export class SlingshotScene extends Phaser.Scene {
   private currentRound: number = 1;
   private targetsInRound: number = 1;
@@ -925,44 +933,158 @@ export class SlingshotScene extends Phaser.Scene {
     }
   }
 
-  private createRewardDisplay(circle: TargetData, rewardAmount: number): void {
+  private createProgressiveRewardDisplay(circle: TargetData, breakdown: RewardBreakdown, hitColor: number): void {
     // Remove base reward display if it exists
     this.removeRewardDisplay(circle);
     
-    // Create actual reward display showing multiplied amount
-    const rewardDisplay = this.add.text(
-      circle.fixedX,
-      circle.fixedY,
-      `+${rewardAmount}`,
-      {
-        fontSize: '32px',
-        color: '#FFD700',
-        fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 2,
-        align: 'center'
-      }
-    ).setOrigin(0.5, 0.5);
+    const x = circle.fixedX;
+    const y = circle.fixedY;
     
-    rewardDisplay.setDepth(20); // Above hit text
+    // Helper function to convert color number to CSS hex string
+    const colorToCss = (color: number): string => {
+      return '#' + color.toString(16).padStart(6, '0');
+    };
     
-    // Animate growing and fading
-    this.tweens.add({
-      targets: rewardDisplay,
-      scale: {from: 0.5, to: 1.5},
-      alpha: {from: 1, to: 0},
-      duration: 1000,
-      ease: 'Quad.easeOut',
-      onComplete: () => {
-        try {
-          rewardDisplay.destroy();
-        } catch (_e) {
-          // Ignore destruction errors
+    const hitColorCss = colorToCss(hitColor);
+    
+    // Stage 1: Show base amount in hit color
+    this.showStage1Base(x, y, breakdown, hitColorCss);
+  }
+  
+  private showStage1Base(x: number, y: number, breakdown: RewardBreakdown, hitColorCss: string): void {
+    console.log(`[REWARD] Stage 1: Base amount ${breakdown.baseAmount} in color ${hitColorCss}`);
+    
+    const baseText = this.add.text(x, y, `${breakdown.baseAmount}`, {
+      fontSize: '48px',
+      color: hitColorCss,
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+      align: 'center'
+    }).setOrigin(0.5, 0.5);
+    
+    baseText.setDepth(102);
+    
+    // Hold for 400ms, then fade over 600ms
+    this.time.delayedCall(400, () => {
+      this.tweens.add({
+        targets: baseText,
+        alpha: { from: 1, to: 0 },
+        duration: 600,
+        ease: 'Linear',
+        onComplete: () => {
+          try {
+            baseText.destroy();
+          } catch (_e) {
+            // Ignore destruction errors
+          }
+          
+          // Chain to Stage 2 or skip if no bonus
+          if (breakdown.bonusAmount > 0) {
+            this.showStage2Bonus(x, y, breakdown, hitColorCss);
+          } else if (breakdown.multiplier > 1) {
+            this.showStage3Multiplier(x, y, breakdown, hitColorCss);
+          }
         }
-      }
+      });
     });
+  }
+  
+  private showStage2Bonus(x: number, y: number, breakdown: RewardBreakdown, hitColorCss: string): void {
+    console.log(`[REWARD] Stage 2: Bonus +${breakdown.bonusAmount}, intermediate total ${breakdown.intermediateAfterBonus}`);
     
-    console.log(`[REWARD] Displaying actual reward +${rewardAmount} (base: +${circle.baseReward}) at circle center (${circle.fixedX}, ${circle.fixedY})`);
+    // Pink bonus text on the left
+    const bonusText = this.add.text(x - 30, y, `+${breakdown.bonusAmount}`, {
+      fontSize: '32px',
+      color: '#ff69b4',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+      align: 'center'
+    }).setOrigin(0.5, 0.5);
+    
+    bonusText.setDepth(102);
+    
+    // Intermediate total on the right in hit color
+    const intermediateText = this.add.text(x + 30, y, `${breakdown.intermediateAfterBonus}`, {
+      fontSize: '40px',
+      color: hitColorCss,
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+      align: 'center'
+    }).setOrigin(0.5, 0.5);
+    
+    intermediateText.setDepth(102);
+    
+    // Hold for 400ms, then fade over 600ms
+    this.time.delayedCall(400, () => {
+      this.tweens.add({
+        targets: [bonusText, intermediateText],
+        alpha: { from: 1, to: 0 },
+        duration: 600,
+        ease: 'Linear',
+        onComplete: () => {
+          try {
+            bonusText.destroy();
+            intermediateText.destroy();
+          } catch (_e) {
+            // Ignore destruction errors
+          }
+          
+          // Chain to Stage 3 if multiplier > 1
+          if (breakdown.multiplier > 1) {
+            this.showStage3Multiplier(x, y, breakdown, hitColorCss);
+          }
+        }
+      });
+    });
+  }
+  
+  private showStage3Multiplier(x: number, y: number, breakdown: RewardBreakdown, hitColorCss: string): void {
+    console.log(`[REWARD] Stage 3: Multiplier x${breakdown.multiplier}, final total ${breakdown.finalTotal}`);
+    
+    // Blue multiplier text on the left
+    const multiplierText = this.add.text(x - 35, y, `x${breakdown.multiplier}`, {
+      fontSize: '32px',
+      color: '#4169e1',
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+      align: 'center'
+    }).setOrigin(0.5, 0.5);
+    
+    multiplierText.setDepth(102);
+    
+    // Final total on the right in hit color
+    const finalText = this.add.text(x + 35, y, `${breakdown.finalTotal}`, {
+      fontSize: '48px',
+      color: hitColorCss,
+      fontStyle: 'bold',
+      stroke: '#000000',
+      strokeThickness: 3,
+      align: 'center'
+    }).setOrigin(0.5, 0.5);
+    
+    finalText.setDepth(102);
+    
+    // Hold for 400ms, then fade over 600ms
+    this.time.delayedCall(400, () => {
+      this.tweens.add({
+        targets: [multiplierText, finalText],
+        alpha: { from: 1, to: 0 },
+        duration: 600,
+        ease: 'Linear',
+        onComplete: () => {
+          try {
+            multiplierText.destroy();
+            finalText.destroy();
+          } catch (_e) {
+            // Ignore destruction errors
+          }
+        }
+      });
+    });
   }
 
   private updateTargets(): void {
@@ -2491,22 +2613,22 @@ export class SlingshotScene extends Phaser.Scene {
       hitQuality = 'HIT';
     }
 
-    // Apply advanced powder mechanics
-    const finalReward = this.processPowderReward(powderReward, currentColor === TARGET_COLORS.PURPLE);
+    // Apply advanced powder mechanics - now returns breakdown
+    const breakdown = this.processPowderReward(powderReward, currentColor === TARGET_COLORS.PURPLE);
     const oldPowder = this.powder;
 
-    this.powder += finalReward;
-    this.totalPowderEarned += finalReward;
-    if (finalReward > this.bestHit) {
-      this.bestHit = finalReward;
+    this.powder += breakdown.finalTotal;
+    this.totalPowderEarned += breakdown.finalTotal;
+    if (breakdown.finalTotal > this.bestHit) {
+      this.bestHit = breakdown.finalTotal;
     }
 
     // Display reward feedback
-    this.displayPowderTransactionFeedback(finalReward, true);
+    this.displayPowderTransactionFeedback(breakdown.finalTotal, true);
     this.animatePowderCounter(oldPowder, this.powder, true);
     
-    // Create reward display at circle center
-    this.createRewardDisplay(targetData, finalReward);
+    // Create progressive reward display at circle center
+    this.createProgressiveRewardDisplay(targetData, breakdown, currentColor);
 
     // Create particle explosion effect at circle center
     this.createHitParticleExplosion(x, y, currentColor, powderReward);
@@ -2521,7 +2643,7 @@ export class SlingshotScene extends Phaser.Scene {
     hitText.setOrigin(0.5);
     hitText.setDepth(101);
 
-    const powderPopup = this.add.text(x, y + 10, `+${finalReward} POWDER`, {
+    const powderPopup = this.add.text(x, y + 10, `+${breakdown.finalTotal} POWDER`, {
       fontSize: '28px',
       color: '#FFD700',
       fontStyle: 'bold',
@@ -2609,8 +2731,8 @@ export class SlingshotScene extends Phaser.Scene {
     });
   }
 
-  private processPowderReward(baseReward: number, isPerfect: boolean): number {
-    let reward = baseReward;
+  private processPowderReward(baseReward: number, isPerfect: boolean): RewardBreakdown {
+    let bonusAmount = 0;
     
     // Handle perfect hit tracking and bonus stage
     if (isPerfect) {
@@ -2625,9 +2747,8 @@ export class SlingshotScene extends Phaser.Scene {
       
       // Apply bonus multiplier
       if (this.bonusStageActive && this.consecutivePerfects > 3) {
-        const bonus = this.consecutivePerfects - 3; // 1, 2, 3, 4...
-        reward += bonus;
-        this.showStatusIndicator(`+${bonus} BONUS`, '#00ff00', 'BONUS');
+        bonusAmount = this.consecutivePerfects - 3; // 1, 2, 3, 4...
+        this.showStatusIndicator(`+${bonusAmount} BONUS`, '#00ff00', 'BONUS');
       }
     } else {
       // Non-perfect hit - exit bonus
@@ -2643,8 +2764,17 @@ export class SlingshotScene extends Phaser.Scene {
     this.consecutiveHits++;
     this.updateStreakMultiplier();
     
-    // Apply streak multiplier
-    reward *= this.streakMultiplier;
+    // Calculate breakdown
+    const intermediateAfterBonus = baseReward + bonusAmount;
+    const finalTotal = intermediateAfterBonus * this.streakMultiplier;
+    
+    const breakdown: RewardBreakdown = {
+      baseAmount: baseReward,
+      bonusAmount: bonusAmount,
+      multiplier: this.streakMultiplier,
+      intermediateAfterBonus: intermediateAfterBonus,
+      finalTotal: finalTotal
+    };
     
     // Update streak display
     this.streakCounterText.setText(`Streak: ${this.consecutiveHits}`);
@@ -2652,7 +2782,9 @@ export class SlingshotScene extends Phaser.Scene {
     // Apply streak increment cue
     this.applyStreakIncrementCue();
     
-    return reward;
+    console.log(`[REWARD] Breakdown: base=${breakdown.baseAmount}, bonus=${breakdown.bonusAmount}, multiplier=${breakdown.multiplier}x, intermediate=${breakdown.intermediateAfterBonus}, final=${breakdown.finalTotal}`);
+    
+    return breakdown;
   }
 
   private onMiss(): void {
