@@ -1116,7 +1116,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.ensureTrailTexture();
 
-    const emitter = this.add.particles(projectile.sprite.x, projectile.sprite.y, 'trail-particle', {
+    // CRITICAL: Create emitter at origin (0, 0) as specified in requirements
+    const emitter = this.add.particles(0, 0, 'trail-particle', {
       speed: 0,
       scale: { start: 0.4, end: 0 },
       alpha: { start: 0.4, end: 0 },
@@ -1128,7 +1129,7 @@ export class SlingshotScene extends Phaser.Scene {
     emitter.setDepth(58);
     emitter.stop();
     projectile.particles = emitter;
-    console.log('[PARTICLES] Grey trail particle emitter created (subtle, 300ms lifespan)');
+    console.log('[PARTICLES] Grey trail particle emitter created at origin (subtle, 300ms lifespan)');
   }
 
   private startTrailEmitter(projectile: ProjectileData): void {
@@ -1145,14 +1146,15 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
+    // Position emitter at projectile location and start continuous emission
     emitter.setPosition(projectile.sprite.x, projectile.sprite.y);
-    emitter.emitParticleAt(projectile.sprite.x, projectile.sprite.y);
     emitter.start();
-    console.log('[PARTICLES] Trail started');
+    console.log('[PARTICLES] Trail started - continuous emission enabled');
   }
 
   private stopTrailEmitter(projectile: ProjectileData, reason: string = 'cleanup'): void {
     if (!projectile.particles) {
+      console.log(`[PARTICLES] No trail emitter to stop (${reason})`);
       return;
     }
 
@@ -1161,15 +1163,16 @@ export class SlingshotScene extends Phaser.Scene {
 
     try {
       emitter.stop();
+      console.log(`[PARTICLES] Trail emission stopped (${reason})`);
     } catch (error) {
-      console.log('[PARTICLES] Error stopping trail emitter:', error);
+      console.log(`[PARTICLES] Error stopping trail emitter (${reason}):`, error);
     }
 
     try {
       emitter.destroy();
-      console.log(`[PARTICLES] Trail stopped (${reason})`);
+      console.log(`[PARTICLES] Trail emitter destroyed (${reason}) - lifecycle complete`);
     } catch (error) {
-      console.log('[PARTICLES] Error destroying trail emitter:', error);
+      console.log(`[PARTICLES] Error destroying trail emitter (${reason}):`, error);
     }
   }
 
