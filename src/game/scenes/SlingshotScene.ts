@@ -2,46 +2,14 @@ import Phaser from 'phaser';
 import { SCENES } from '@/config/gameConfig';
 import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS, TARGET_COLORS, POWDER_REWARDS, CIRCLE_SPACING } from '@/utils/constants';
 import { createButton, createTextStyle } from '@/utils/helpers';
+import { PowderHud } from '@/game/slingshot/PowderHud';
+import { RewardSystem } from '@/game/slingshot/RewardSystem';
+import { TargetManager } from '@/game/slingshot/TargetManager';
+import type { JoypadUI, ProjectileData, TargetData } from '@/game/slingshot/types';
 
 const JOYPAD_BASE_RADIUS = 82;
 const JOYPAD_KNOB_RADIUS = 26;
 const MISS_EDGE_PADDING = 50;
-
-interface TargetData {
-  sprite: Phaser.Physics.Arcade.Sprite;
-  graphic: Phaser.GameObjects.Arc;
-  startTime: number;
-  lifetime: number;
-  initialRadius: number;
-  hit: boolean;
-  missTriggered: boolean;
-  ring: Phaser.GameObjects.Arc;
-  fixedX: number;
-  fixedY: number;
-  baseReward: number;
-}
-
-interface JoypadUI {
-  container: Phaser.GameObjects.Container;
-  base: Phaser.GameObjects.Arc;
-  knob: Phaser.GameObjects.Arc;
-  powerLine: Phaser.GameObjects.Graphics;
-  trajectoryLine: Phaser.GameObjects.Graphics;
-  centerX: number;
-  centerY: number;
-  offsetX: number;
-  offsetY: number;
-}
-
-interface ProjectileData {
-  sprite: Phaser.Physics.Arcade.Sprite;
-  ring: Phaser.GameObjects.Arc;
-  targetColor: number;
-  fadingOut: boolean;
-  hasCollided: boolean;
-  shouldDestroy: boolean;
-  particles?: Phaser.GameObjects.Particles.ParticleEmitter;
-}
 
 export class SlingshotScene extends Phaser.Scene {
   private currentRound: number = 1;
@@ -53,11 +21,9 @@ export class SlingshotScene extends Phaser.Scene {
   private bestHit: number = 0;
 
   private roundText!: Phaser.GameObjects.Text;
-  private powderHudContainer!: Phaser.GameObjects.Container;
-  private powderLabel!: Phaser.GameObjects.Text;
-  private powderValue!: Phaser.GameObjects.Text;
-  private transactionText!: Phaser.GameObjects.Text;
-  private powderText!: Phaser.GameObjects.Text; // Keep for backward compatibility
+  private powderHud: PowderHud;
+  private rewardSystem: RewardSystem;
+  private targetManager: TargetManager;
   private instructionsText!: Phaser.GameObjects.Text;
   private sequenceProgressText!: Phaser.GameObjects.Text;
   private streakCounterText!: Phaser.GameObjects.Text;
@@ -68,7 +34,6 @@ export class SlingshotScene extends Phaser.Scene {
   private activeProjectiles: ProjectileData[] = [];
   private slingshotEnabled: boolean = true;
 
-  private targets: TargetData[] = [];
   private ground!: Phaser.GameObjects.Rectangle;
 
   private joypad?: JoypadUI;
@@ -88,28 +53,14 @@ export class SlingshotScene extends Phaser.Scene {
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private shotsInCurrentSequence: number = 0;
-
-  // Advanced powder mechanics
-  private consecutivePerfects: number = 0;
-  private bonusStageActive: boolean = false;
-  private consecutiveHits: number = 0;
-  private streakMultiplier: number = 1;
-  
-  // Powder animation tracking
-  private powderAnimationTween?: Phaser.Tweens.Tween;
-  private transactionTween?: Phaser.Tweens.Tween;
-  private transactionQueue: Array<{ amount: number; type: 'cost' | 'reward' }> = [];
-  private transactionActive: boolean = false;
-  
-  // Bonus mode visual tracking
-  private bonusModeAnimation?: Phaser.Time.TimerEvent;
-  private bonusModeVisualActive: boolean = false;
   
   // Reward display tracking
-  private rewardDisplays: Map<TargetData, Phaser.GameObjects.Text> = new Map();
 
   constructor() {
     super({ key: SCENES.SLINGSHOT });
+    this.powderHud = new PowderHud(this);
+    this.rewardSystem = new RewardSystem(this, this.powderHud);
+    this.targetManager = new TargetManager(this);
     this.slingshotEnabled = true; // Initialize as enabled
   }
 
@@ -132,24 +83,10 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     // Clean up transaction queue and tweens
-    this.clearPowderTransactionFeedback();
+    this.powderHud.clearFeedback();
+    this.rewardSystem.resetAll();
 
-    // Clean up bonus mode animations
-    if (this.bonusModeAnimation) {
-      this.bonusModeAnimation.remove();
-      this.bonusModeAnimation = undefined;
-    }
-    this.bonusModeVisualActive = false;
-    
-    // Clean up reward displays
-    this.rewardDisplays.forEach((rewardDisplay) => {
-      try {
-        rewardDisplay.destroy();
-      } catch (_e) {
-        // Ignore destruction errors
-      }
-    });
-    this.rewardDisplays.clear();
+    this.targetManager.resetTargets();
 
     if (this.currentProjectile) {
       try {
@@ -172,18 +109,6 @@ export class SlingshotScene extends Phaser.Scene {
       this.destroyJoypad();
     }
 
-    if (this.targets.length > 0) {
-      const existingTargets = [...this.targets];
-      existingTargets.forEach((target) => {
-        // Clean up reward displays for all targets
-        this.removeRewardDisplay(target);
-        target.sprite.destroy();
-        target.graphic.destroy();
-        target.ring.destroy();
-      });
-      this.targets = [];
-    }
-
     this.resetDragState();
 
     this.snappedVelocity = undefined;
@@ -198,15 +123,8 @@ export class SlingshotScene extends Phaser.Scene {
     this.missesInSequence = 0;
     this.shotsInCurrentSequence = 0;
 
-    // Reset advanced powder mechanics
-    this.consecutivePerfects = 0;
-    this.bonusStageActive = false;
-    this.consecutiveHits = 0;
-    this.streakMultiplier = 1;
-    
-    // Refresh multiplier display to hide x1 on reset
     if (this.streakMultiplierText) {
-      this.refreshMultiplierDisplay();
+      this.rewardSystem.refreshMultiplierDisplay();
     }
 
     this.currentRound = 1;
@@ -460,7 +378,10 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
-    this.updateTargets();
+    this.targetManager.updateTargets({
+      currentProjectile: this.currentProjectile,
+      onTargetMiss: (target) => this.handleTargetMiss(target),
+    });
 
     if (this.targetsRemainingInRound === 0 && 
         this.targetsSpawnedInRound === this.targetsInRound && 
@@ -609,7 +530,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.shotsInCurrentSequence = 0;
     
     // Clear any pending transaction feedback
-    this.clearPowderTransactionFeedback();
+    this.powderHud.clearFeedback();
     
     // BONUS MODE PERSISTENCE: Do NOT reset bonus counters at sequence start
     // Only reset sequence-specific counters, let bonus mode persist across sequences
@@ -633,7 +554,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.updateSequenceProgressText();
     
     // Ensure multiplier display is hidden at sequence start
-    this.refreshMultiplierDisplay();
+    this.rewardSystem.refreshMultiplierDisplay();
     
     if (!this.firstSequenceStarted) {
       this.firstSequenceStarted = true;
@@ -995,7 +916,7 @@ export class SlingshotScene extends Phaser.Scene {
     const y = targetData.fixedY;
 
     // Handle miss mechanics (reset streaks/bonus)
-    this.onMiss();
+    this.rewardSystem.handleMiss();
 
     // Fade out reward display when circle is missed
     const rewardDisplay = this.rewardDisplays.get(targetData);
@@ -1774,8 +1695,8 @@ export class SlingshotScene extends Phaser.Scene {
     
     // Deduct powder and animate
     this.powder -= shotCost;
-    this.displayPowderTransactionFeedback(shotCost, false);
-    this.animatePowderCounter(oldPowder, this.powder, false);
+    this.powderHud.displayTransaction(shotCost, false);
+    this.powderHud.animatePowderCounter(oldPowder, this.powder, false);
 
     // CRITICAL FIX: Add projectile to active array and clear currentProjectile for concurrent shooting
     if (this.currentProjectile) {
@@ -1865,7 +1786,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.missesInSequence++;
 
       // Handle miss mechanics (reset streaks/bonus)
-      this.onMiss();
+      this.rewardSystem.handleMiss();
 
       // Stop physics IMMEDIATELY
       try {
@@ -1945,7 +1866,7 @@ export class SlingshotScene extends Phaser.Scene {
       
       // Register as miss immediately
       this.missesInSequence++;
-      this.onMiss();
+      this.rewardSystem.handleMiss();
       
       // Create particle burst at impact location
       if (projectile.sprite) {
@@ -2046,7 +1967,7 @@ export class SlingshotScene extends Phaser.Scene {
       
       // Register as miss immediately
       this.missesInSequence++;
-      this.onMiss();
+      this.rewardSystem.handleMiss();
       
       // Create particle burst at impact location
       if (projectile.sprite) {
@@ -2144,7 +2065,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.missesInSequence++;
 
     // Handle miss mechanics (reset streaks/bonus)
-    this.onMiss();
+    this.rewardSystem.handleMiss();
 
     // Create particle burst at impact location
     if (projectile.sprite) {
@@ -2335,7 +2256,7 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     // Apply advanced powder mechanics
-    const finalReward = this.processPowderReward(powderReward, currentColor === TARGET_COLORS.PURPLE);
+    const finalReward = this.rewardSystem.processReward(powderReward, currentColor === TARGET_COLORS.PURPLE);
     const oldPowder = this.powder;
 
     this.powder += finalReward;
@@ -2345,8 +2266,8 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     // Display reward feedback
-    this.displayPowderTransactionFeedback(finalReward, true);
-    this.animatePowderCounter(oldPowder, this.powder, true);
+    this.powderHud.displayTransaction(finalReward, true);
+    this.powderHud.animatePowderCounter(oldPowder, this.powder, true);
     
     // Create reward display at circle center
     this.createRewardDisplay(targetData, finalReward);
@@ -2392,7 +2313,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Remove target immediately (both circle and sprite disappear)
     this.removeTarget(targetData);
-    this.updatePowderText();
+    this.powderHud.updateValue(this.powder);
     
     console.log('[HIT] Target processing complete, projectile cleanup will be handled by update loop');
   }
@@ -2449,128 +2370,6 @@ export class SlingshotScene extends Phaser.Scene {
     // Clean up the emitter after particles finish
     this.time.delayedCall(particleLifespan + 100, () => {
       particles.destroy();
-    });
-  }
-
-  private processPowderReward(baseReward: number, isPerfect: boolean): number {
-    let reward = baseReward;
-    
-    // Handle perfect hit tracking and bonus stage
-    if (isPerfect) {
-      this.consecutivePerfects++;
-      
-      // Activate bonus after 3 perfects
-      if (this.consecutivePerfects === 3) {
-        this.bonusStageActive = true;
-        this.activateBonusModeVisual();
-        this.showStatusIndicator('BONUS STAGE ACTIVATED!', '#00ff00', 'BONUS STAGE');
-      }
-      
-      // Apply bonus multiplier
-      if (this.bonusStageActive && this.consecutivePerfects > 3) {
-        const bonus = this.consecutivePerfects - 3; // 1, 2, 3, 4...
-        reward += bonus;
-        this.showStatusIndicator(`+${bonus} BONUS`, '#00ff00', 'BONUS');
-      }
-    } else {
-      // Non-perfect hit - exit bonus
-      if (this.bonusStageActive) {
-        this.deactivateBonusModeVisual();
-        this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
-      }
-      this.bonusStageActive = false;
-      this.consecutivePerfects = 0;
-    }
-    
-    // Track consecutive hits
-    this.consecutiveHits++;
-    this.updateStreakMultiplier();
-    
-    // Apply streak multiplier
-    reward *= this.streakMultiplier;
-    
-    // Update streak display
-    this.streakCounterText.setText(`Streak: ${this.consecutiveHits}`);
-    
-    // Apply streak increment cue
-    this.applyStreakIncrementCue();
-    
-    return reward;
-  }
-
-  private onMiss(): void {
-    // Reset streak
-    if (this.streakMultiplier > 1) {
-      this.showStatusIndicator('STREAK LOST', '#ff6600', 'MULTIPLIER RESET');
-    }
-    this.streakMultiplier = 1;
-    this.consecutiveHits = 0;
-    
-    // Exit bonus stage
-    if (this.bonusStageActive) {
-      this.deactivateBonusModeVisual();
-      this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
-    }
-    this.bonusStageActive = false;
-    this.consecutivePerfects = 0;
-    
-    // Update streak displays
-    this.streakCounterText.setText('Streak: 0');
-    this.refreshMultiplierDisplay();
-    
-    // Flash red briefly to indicate streak broken
-    this.resetStreakDisplay();
-  }
-
-  private updateStreakMultiplier(): void {
-    if (this.consecutiveHits === 5) {
-      this.streakMultiplier = 2;
-      this.showStatusIndicator('2x MULTIPLIER', '#ffff00', 'STREAK');
-      this.applyMultiplierUpgradeCue();
-    } else if (this.consecutiveHits === 10) {
-      this.streakMultiplier = 3;
-      this.showStatusIndicator('3x MULTIPLIER', '#ffff00', 'STREAK');
-      this.applyMultiplierUpgradeCue();
-    } else if (this.consecutiveHits === 25) {
-      this.streakMultiplier = 4;
-      this.showStatusIndicator('4x MULTIPLIER', '#ffff00', 'STREAK');
-      this.applyMultiplierUpgradeCue();
-    } else if (this.consecutiveHits === 50) {
-      this.streakMultiplier = 5;
-      this.showStatusIndicator('5x MULTIPLIER', '#ffff00', 'STREAK');
-      this.applyMultiplierUpgradeCue();
-    }
-    
-    // Always refresh display after multiplier changes
-    this.refreshMultiplierDisplay();
-  }
-
-  private showStatusIndicator(mainText: string, color: string, subText: string): void {
-    const container = this.add.container(this.cameras.main.centerX, 200);
-    
-    const main = this.add.text(0, 0, mainText, {
-      fontSize: '48px',
-      color: color,
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 3
-    }).setOrigin(0.5);
-    
-    const sub = this.add.text(0, 50, subText, {
-      fontSize: '24px',
-      color: color
-    }).setOrigin(0.5);
-    
-    container.add([main, sub]);
-    container.setDepth(260);
-    
-    // Animate and remove
-    this.tweens.add({
-      targets: container,
-      scale: {from: 0.5, to: 1},
-      alpha: {from: 1, to: 0},
-      duration: 2000,
-      onComplete: () => container.destroy()
     });
   }
 
@@ -2823,7 +2622,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.missesInSequence++;
 
       // Handle miss mechanics (reset streaks/bonus)
-      this.onMiss();
+      this.rewardSystem.handleMiss();
 
       // Stop physics IMMEDIATELY
       try {
@@ -2889,7 +2688,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.missesInSequence++;
 
     // Handle miss mechanics (reset streaks/bonus)
-    this.onMiss();
+    this.rewardSystem.handleMiss();
 
     // Create particle burst at impact location
     if (projectile.sprite) {
@@ -2948,53 +2747,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.roundText.setOrigin(0.5, 0);
     this.roundText.setDepth(100);
 
-    // Structured powder HUD container (label, value, transaction)
-    const powderHudPaddingX = Math.max(20, width * 0.02);
-    const powderHudPaddingY = Math.max(24, height * 0.03);
-
-    this.powderHudContainer = this.add.container(powderHudPaddingX, powderHudPaddingY);
-    this.powderHudContainer.setDepth(100);
-
-    this.powderLabel = this.add.text(0, 0, 'POWDER', {
-      fontSize: '24px',
-      color: '#ffffff',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 2
-    }).setOrigin(0, 0.5);
-
-    this.powderValue = this.add.text(0, 0, this.powder.toString(), {
-      fontSize: '28px',
-      color: '#FFD700',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 2
-    }).setOrigin(0, 0.5);
-
-    this.transactionText = this.add.text(0, 0, '', {
-      fontSize: '20px',
-      color: '#ffffff',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 2
-    }).setOrigin(0, 0.5);
-    this.transactionText.setVisible(false);
-    this.transactionText.setAlpha(0);
-
-    this.powderHudContainer.add([this.powderLabel, this.powderValue, this.transactionText]);
-
-    // Keep original powderText for backward compatibility with existing animation methods
-    this.powderText = this.add.text(
-      powderHudPaddingX,
-      powderHudPaddingY - 14,
-      `POWDER: ${this.powder}`,
-      createTextStyle('28px', '#FFD700')
-    );
-    this.powderText.setOrigin(0, 0);
-    this.powderText.setDepth(90); // Behind the new elements
-    this.powderText.setVisible(false); // Hide the original
-
-    this.layoutPowderHud();
+    this.powderHud.create(this.powder);
 
     this.sequenceProgressText = this.add.text(
       width - 20,
@@ -3024,9 +2777,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.streakMultiplierText.setOrigin(0.5, 0);
     this.streakMultiplierText.setDepth(100);
     this.streakMultiplierText.setStroke('#000000', 2);
-    
-    // Initialize multiplier display as hidden (base x1 should not show)
-    this.refreshMultiplierDisplay();
+
+    this.rewardSystem.attachStreakTexts(this.streakCounterText, this.streakMultiplierText);
+    this.rewardSystem.refreshMultiplierDisplay();
 
     this.instructionsText = this.add.text(
       width / 2,
@@ -3038,305 +2791,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.instructionsText.setDepth(100);
   }
 
-  private updatePowderText(): void {
-    // Update the new separated value element
-    this.powderValue.setText(this.powder.toString());
-    
-    // Also update the hidden original for backward compatibility
-    this.powderText.setText(`POWDER: ${this.powder}`);
 
-    this.layoutPowderHud();
-  }
-
-  private layoutPowderHud(): void {
-    if (!this.powderLabel || !this.powderValue || !this.transactionText) {
-      return;
-    }
-
-    const labelWidth = this.powderLabel.width;
-    const valueWidth = this.powderValue.width;
-    const labelValueSpacing = 8;
-    const valueTransactionSpacing = 12;
-
-    this.powderLabel.setPosition(0, 0);
-    this.powderValue.setPosition(labelWidth + labelValueSpacing, 0);
-    this.transactionText.setPosition(labelWidth + labelValueSpacing + valueWidth + valueTransactionSpacing, 0);
-  }
-
-  private animatePowderCounter(oldValue: number, newValue: number, isReward: boolean): void {
-    // Kill any existing tween to prevent conflicts
-    if (this.powderAnimationTween) {
-      this.powderAnimationTween.destroy();
-    }
-
-    const animationObj: { value: number } = { value: oldValue };
-    
-    this.powderAnimationTween = this.tweens.add({
-      targets: animationObj,
-      value: newValue,
-      duration: 500,
-      ease: 'Quad.easeOut',
-      onUpdate: (_tween) => {
-        const displayValue = Math.round(animationObj.value);
-        this.powderValue.setText(displayValue.toString());
-        // Also update hidden original for compatibility
-        this.powderText.setText(`POWDER: ${displayValue}`);
-        this.layoutPowderHud();
-      }
-    });
-
-    // Apply cue effect to powder counter
-    if (isReward) {
-      this.applyPowderRewardCue();
-    } else {
-      this.applyPowderConsumptionCue();
-    }
-  }
-
-  private applyPowderConsumptionCue(): void {
-    const powderDisplay = this.powderValue;
-    const originalColor = '#FFD700'; // Yellow - original powder color
-
-    powderDisplay.setColor('#ff0000');
-    powderDisplay.setScale(0.7);
-
-    this.tweens.add({
-      targets: powderDisplay,
-      scale: { from: 0.7, to: 1.0 },
-      duration: 600,
-      ease: 'Back.easeOut',
-      onComplete: () => {
-        powderDisplay.setColor(originalColor);
-      }
-    });
-  }
-
-  private applyPowderRewardCue(): void {
-    const powderDisplay = this.powderValue;
-    const originalColor = '#FFD700'; // Yellow - original powder color
-
-    powderDisplay.setColor('#00ff00');
-    powderDisplay.setScale(1.3);
-
-    this.tweens.add({
-      targets: powderDisplay,
-      scale: { from: 1.3, to: 1.0 },
-      duration: 600,
-      ease: 'Back.easeOut',
-      onComplete: () => {
-        powderDisplay.setColor(originalColor);
-      }
-    });
-  }
-
-  private displayPowderTransactionFeedback(amount: number, isReward: boolean): void {
-    const type = isReward ? 'reward' : 'cost';
-    console.log(`[POWDER] ${isReward ? 'Reward' : 'Shot cost'} ${isReward ? '+' : '-'}${Math.abs(amount)}`);
-
-    if (this.transactionActive) {
-      this.transactionQueue.push({ amount, type });
-      return;
-    }
-
-    this.showTransactionText(amount, type);
-  }
-
-  private showTransactionText(amount: number, type: 'cost' | 'reward'): void {
-    if (!this.transactionText) {
-      return;
-    }
-
-    this.transactionActive = true;
-    const isReward = type === 'reward';
-    const color = isReward ? '#00ff00' : '#ff0000';
-    const sign = isReward ? '+' : '-';
-    const displayText = `${sign}${Math.abs(amount)}`;
-
-    this.transactionText.setText(displayText);
-    this.transactionText.setColor(color);
-    this.transactionText.setVisible(true);
-    this.transactionText.setAlpha(1);
-    this.layoutPowderHud();
-
-    if (this.transactionTween) {
-      this.transactionTween.destroy();
-    }
-
-    this.transactionTween = this.tweens.add({
-      targets: this.transactionText,
-      alpha: { from: 1, to: 0 },
-      duration: 600,
-      delay: 400,
-      ease: 'Cubic.easeOut',
-      onComplete: () => {
-        if (this.transactionText) {
-          this.transactionText.setVisible(false);
-          this.transactionText.setText('');
-        }
-        this.transactionActive = false;
-        this.processNextTransaction();
-      }
-    });
-  }
-
-  private processNextTransaction(): void {
-    if (this.transactionQueue.length > 0) {
-      const next = this.transactionQueue.shift();
-      if (next) {
-        this.showTransactionText(next.amount, next.type);
-      }
-    }
-  }
-
-  private clearPowderTransactionFeedback(): void {
-    this.transactionQueue = [];
-    this.transactionActive = false;
-    if (this.transactionTween) {
-      this.transactionTween.stop();
-      this.transactionTween = undefined;
-    }
-
-    if (this.transactionText) {
-      this.transactionText.setVisible(false);
-      this.transactionText.setAlpha(0);
-      this.transactionText.setText('');
-    }
-  }
-
-  private activateBonusModeVisual(): void {
-    if (this.bonusModeVisualActive) {
-      console.log('[BONUS] Bonus mode visual already active, skipping');
-      return;
-    }
-
-    console.log('[BONUS] Activating bonus mode visual effects');
-    this.bonusModeVisualActive = true;
-
-    // Define rainbow color palette
-    const RAINBOW_COLORS = [
-      '#ff0000', // Red
-      '#ff7f00', // Orange
-      '#ffff00', // Yellow
-      '#00ff00', // Green
-      '#0000ff', // Blue
-      '#4b0082', // Indigo
-      '#9400d3'  // Violet
-    ];
-
-    // Stop any previous animation
-    if (this.bonusModeAnimation) {
-      this.bonusModeAnimation.remove();
-      this.bonusModeAnimation = undefined;
-    }
-
-    // Rainbow color cycling
-    let colorIndex = 0;
-    this.bonusModeAnimation = this.time.addEvent({
-      delay: 150, // ms between color changes
-      loop: true,
-      callback: () => {
-        if (this.powderLabel && this.bonusModeVisualActive) {
-          this.powderLabel.setColor(RAINBOW_COLORS[colorIndex % RAINBOW_COLORS.length]);
-          colorIndex++;
-        }
-      }
-    });
-
-    // Size blinking effect (continuous pulse)
-    this.tweens.add({
-      targets: this.powderLabel,
-      scale: { from: 1.0, to: 1.15 },
-      duration: 400,
-      yoyo: true,
-      repeat: -1, // Infinite loop while bonus active
-      ease: 'Sine.easeInOut'
-    });
-  }
-
-  private deactivateBonusModeVisual(): void {
-    if (!this.bonusModeVisualActive) {
-      console.log('[BONUS] Bonus mode visual not active, skipping deactivation');
-      return;
-    }
-
-    console.log('[BONUS] Deactivating bonus mode visual effects');
-    this.bonusModeVisualActive = false;
-
-    // Stop color cycling
-    if (this.bonusModeAnimation) {
-      this.bonusModeAnimation.remove();
-      this.bonusModeAnimation = undefined;
-    }
-
-    // Stop size blinking animation
-    this.tweens.killTweensOf(this.powderLabel);
-
-    // Restore original appearance
-    this.powderLabel.setColor('#ffffff'); // Original white color
-    this.powderLabel.setScale(1.0); // Back to normal size
-  }
-
-  private applyStreakIncrementCue(): void {
-    // Only animate if multiplier display is visible (multiplier > 1)
-    if (this.streakMultiplierText.visible) {
-      this.tweens.add({
-        targets: this.streakMultiplierText,
-        scale: { from: 1.0, to: 1.15 },
-        duration: 300,
-        ease: 'Back.easeOut'
-      });
-    }
-  }
-
-  private applyMultiplierUpgradeCue(): void {
-    // Only animate if multiplier display is visible (multiplier > 1)
-    if (this.streakMultiplierText.visible) {
-      this.tweens.add({
-        targets: this.streakMultiplierText,
-        scale: { from: 1.0, to: 1.4 },
-        duration: 500,
-        ease: 'Elastic.easeOut',
-        easeParams: [1.5, 0.5]
-      });
-
-      // Flash to bright color
-      const originalColor = '#ffaa00'; // Orange - original multiplier color
-      this.streakMultiplierText.setColor('#ffff00');
-
-      this.time.delayedCall(250, () => {
-        this.streakMultiplierText.setColor(originalColor);
-      });
-    }
-  }
-
-  private refreshMultiplierDisplay(): void {
-    if (this.streakMultiplier > 1) {
-      // Show multiplier text with correct value
-      this.streakMultiplierText.setVisible(true);
-      this.streakMultiplierText.setText(`x${this.streakMultiplier}`);
-      console.log(`[MULTIPLIER] Showing multiplier: x${this.streakMultiplier} (visible: true, text set)`);
-    } else {
-      // Hide multiplier text when at x1 base
-      this.streakMultiplierText.setVisible(false);
-      this.streakMultiplierText.setText('');
-      // Reset scale and color to prevent lingering animations
-      this.streakMultiplierText.setScale(1.0);
-      this.streakMultiplierText.setColor('#ffaa00'); // Original orange color
-      console.log('[MULTIPLIER] Hiding base multiplier (visible: false, text cleared, scale/color reset)');
-    }
-  }
-
-  private resetStreakDisplay(): void {
-    // Only animate if multiplier display is visible (multiplier > 1)
-    if (this.streakMultiplierText.visible) {
-      const originalColor = '#ffaa00'; // Orange - original multiplier color
-      this.streakMultiplierText.setColor('#ff0000');
-
-      this.time.delayedCall(300, () => {
-        this.streakMultiplierText.setColor(originalColor);
-      });
-    }
-  }
 
   private updateRoundText(): void {
     this.roundText.setText(`Round ${this.currentRound}`);
@@ -3485,7 +2940,7 @@ export class SlingshotScene extends Phaser.Scene {
         this.shotsInCurrentSequence = 0;
         
         // Clear pending transaction feedback
-        this.clearPowderTransactionFeedback();
+        this.powderHud.clearFeedback();
         
         // Clear joypad BEFORE showing any overlays
         this.clearJoypadState();
@@ -3580,17 +3035,7 @@ export class SlingshotScene extends Phaser.Scene {
   private resetStreakBeforeCountdown(): void {
     console.log('[SEQUENCE] Resetting streak before countdown');
 
-    // Reset streak counters
-    this.consecutiveHits = 0;
-    this.streakMultiplier = 1;
-
-    // Update UI displays if they exist
-    if (this.streakCounterText) {
-      this.streakCounterText.setText('Streak: 0');
-    }
-    
-    // Use centralized method to hide multiplier text (no x1 should show)
-    this.refreshMultiplierDisplay();
+    this.rewardSystem.resetStreakOnly();
 
     console.log('[SEQUENCE] Streak reset complete - consecutiveHits: 0, multiplier: 1x');
 
@@ -3621,10 +3066,10 @@ export class SlingshotScene extends Phaser.Scene {
     // Clear joypad BEFORE showing game over overlay
     this.clearJoypadState();
     
-    this.clearPowderTransactionFeedback();
+    this.powderHud.clearFeedback();
     
     // Hide multiplier display on game over
-    this.refreshMultiplierDisplay();
+    this.rewardSystem.refreshMultiplierDisplay();
     
     // Stop all active projectiles
     this.activeProjectiles.forEach((projectile) => {
