@@ -1703,7 +1703,7 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     const joypad = this.joypad;
-    const { costText } = joypad;
+    const costText = joypad.costText!; // Non-null assertion - we've checked it exists
 
     if (!costText.active) {
       joypad.costText = undefined;
