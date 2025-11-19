@@ -1287,8 +1287,17 @@ export class SlingshotScene extends Phaser.Scene {
       this.currentProjectile.sprite.setRotation(aimAngle);
     }
 
+    // Calculate power ratio for variable thickness
+    const dragDistance = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+    const minDrag = INPUT_THRESHOLDS.DRAG_MIN_DISTANCE;
+    const maxDrag = maxDistance;
+    const powerRatio = Math.max(0, Math.min(1, (dragDistance - minDrag) / (maxDrag - minDrag)));
+    
+    // Interpolate power line thickness from 2px to 6px
+    const basePowerLineWidth = 2 + powerRatio * 4;
+
     this.joypad.powerLine.clear();
-    this.joypad.powerLine.lineStyle(4, COLORS.PRIMARY, 0.6);
+    this.joypad.powerLine.lineStyle(basePowerLineWidth, COLORS.PRIMARY, 0.6);
     this.joypad.powerLine.beginPath();
     this.joypad.powerLine.moveTo(this.joypad.centerX, this.joypad.centerY);
     this.joypad.powerLine.lineTo(this.joypad.knob.x, this.joypad.knob.y);
@@ -1310,6 +1319,11 @@ export class SlingshotScene extends Phaser.Scene {
     if (dragDistance <= INPUT_THRESHOLDS.DRAG_MIN_DISTANCE) {
       return;
     }
+
+    // Calculate power ratio for variable thickness
+    const minDrag = INPUT_THRESHOLDS.DRAG_MIN_DISTANCE;
+    const maxDrag = 120; // Joystick max distance
+    const powerRatio = Math.max(0, Math.min(1, (dragDistance - minDrag) / (maxDrag - minDrag)));
 
     const velocityMultiplier = 6.5;
     let vx = -this.joypad.offsetX * velocityMultiplier;
@@ -1403,7 +1417,13 @@ export class SlingshotScene extends Phaser.Scene {
 
     const lineColor = isSnapped ? 0x00ff00 : COLORS.WARNING;
     const lineAlpha = isSnapped ? 0.7 : 0.45;
-    const lineWidth = isSnapped ? 4 : 3;
+    
+    // Interpolate base trajectory thickness from 2px to 6px based on power
+    const baseLineWidth = 2 + powerRatio * 4;
+    // Add +1px when snapped for visual distinction
+    const lineWidth = isSnapped ? baseLineWidth + 1 : baseLineWidth;
+    
+    console.log(`[JOYPAD-DEBUG] Trajectory width: ${lineWidth.toFixed(2)}px (power: ${(powerRatio * 100).toFixed(0)}%, snapped: ${isSnapped})`);
 
     this.joypad.trajectoryLine.lineStyle(lineWidth, lineColor, lineAlpha);
     this.joypad.trajectoryLine.beginPath();
