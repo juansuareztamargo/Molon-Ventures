@@ -368,7 +368,7 @@ export class SlingshotScene extends Phaser.Scene {
       // Keep particle emitter following projectile and rotate arrow to velocity direction
       if (this.currentProjectile) {
         const trailEmitter = this.currentProjectile.particles;
-        if (trailEmitter && trailEmitter.manager && !this.currentProjectile.fadingOut) {
+        if (trailEmitter && !this.currentProjectile.fadingOut) {
           trailEmitter.setPosition(sprite.x, sprite.y);
         }
       }
@@ -439,7 +439,7 @@ export class SlingshotScene extends Phaser.Scene {
 
       // Keep particle emitter following projectile
       const trailEmitter = projectile.particles;
-      if (trailEmitter && trailEmitter.manager && !projectile.fadingOut) {
+      if (trailEmitter && !projectile.fadingOut) {
         trailEmitter.setPosition(sprite.x, sprite.y);
       }
 
@@ -1138,7 +1138,7 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     const emitter = projectile.particles;
-    if (!emitter || !emitter.manager) {
+    if (!emitter) {
       return;
     }
 
@@ -1954,7 +1954,9 @@ export class SlingshotScene extends Phaser.Scene {
       
     } catch (error) {
       console.error('[GROUND-DIAGNOSTIC] ERROR in destroyProjectileOnGroundImpact:', error);
-      console.error(error.stack);
+      if (error instanceof Error) {
+        console.error(error.stack);
+      }
       // Failsafe cleanup
       try {
         if (projectile.sprite) projectile.sprite.destroy();
@@ -2053,7 +2055,9 @@ export class SlingshotScene extends Phaser.Scene {
       
     } catch (error) {
       console.error('[GROUND-DIAGNOSTIC] ERROR in destroyActiveProjectileOnGroundImpact:', error);
-      console.error(error.stack);
+      if (error instanceof Error) {
+        console.error(error.stack);
+      }
       // Failsafe cleanup
       try {
         if (projectile.sprite) projectile.sprite.destroy();
@@ -2141,11 +2145,9 @@ export class SlingshotScene extends Phaser.Scene {
       console.log(`[GROUND-DIAGNOSTIC] Destroying sprite and ring`);
       if (projectile.sprite) {
         projectile.sprite.destroy();
-        projectile.sprite = null;
       }
       if (projectile.ring) {
         projectile.ring.destroy();
-        projectile.ring = null;
       }
     } catch (error) {
       console.log(`[GROUND-DIAGNOSTIC] Error destroying objects:`, error);
@@ -2178,11 +2180,9 @@ export class SlingshotScene extends Phaser.Scene {
       console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile sprite and ring`);
       if (projectile.sprite) {
         projectile.sprite.destroy();
-        projectile.sprite = null;
       }
       if (projectile.ring) {
         projectile.ring.destroy();
-        projectile.ring = null;
       }
     } catch (error) {
       console.log(`[GROUND-DIAGNOSTIC] Error destroying active projectile objects:`, error);
@@ -2456,8 +2456,6 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private updateStreakMultiplier(): void {
-    const previousMultiplier = this.streakMultiplier;
-    
     if (this.consecutiveHits === 5) {
       this.streakMultiplier = 2;
       this.showStatusIndicator('2x MULTIPLIER', '#ffff00', 'STREAK');
