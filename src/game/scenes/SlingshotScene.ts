@@ -1482,6 +1482,41 @@ export class SlingshotScene extends Phaser.Scene {
     this.clearDragPointerData();
   }
 
+  /**
+   * Tears down the joypad state automatically when a sequence ends.
+   * This ensures no lingering UI or pre-launch projectiles remain.
+   * 
+   * Safe to call repeatedly (guards against undefined joypad).
+   * 
+   * Note: Input is re-enabled during the countdown phase in startRound(),
+   * not here. This keeps input disabled until the next "START!" appears.
+   */
+  private clearJoypadState(): void {
+    console.log('[INPUT] Clearing joypad state (sequence ended)');
+
+    // Destroy the joypad container (safe if already destroyed)
+    if (this.joypad) {
+      console.log('[INPUT] Destroying joypad UI');
+      this.destroyJoypad();
+    }
+
+    // Clean up any pre-launch projectile that was being aimed
+    if (this.currentProjectile) {
+      console.log('[INPUT] Cleaning up pre-launch projectile');
+      this.prepareNextShot();
+    }
+
+    // Reset drag/pointer offsets
+    this.resetDragState();
+
+    // Clear snapped velocity
+    this.snappedVelocity = undefined;
+
+    // Disable slingshot until next countdown completes
+    this.slingshotEnabled = false;
+    console.log('[INPUT] Slingshot DISABLED (awaiting next countdown)');
+  }
+
   private launchProjectile(): boolean {
     if (!this.currentProjectile || !this.joypad) {
       return false;
@@ -1865,7 +1900,7 @@ export class SlingshotScene extends Phaser.Scene {
       
     } catch (error) {
       console.error('[GROUND-DIAGNOSTIC] ERROR in destroyProjectileOnGroundImpact:', error);
-      console.error(error.stack);
+      console.error((error as Error).stack);
       // Failsafe cleanup
       try {
         if (projectile.sprite) projectile.sprite.destroy();
@@ -1974,7 +2009,7 @@ export class SlingshotScene extends Phaser.Scene {
       
     } catch (error) {
       console.error('[GROUND-DIAGNOSTIC] ERROR in destroyActiveProjectileOnGroundImpact:', error);
-      console.error(error.stack);
+      console.error((error as Error).stack);
       // Failsafe cleanup
       try {
         if (projectile.sprite) projectile.sprite.destroy();
@@ -2072,7 +2107,6 @@ export class SlingshotScene extends Phaser.Scene {
       console.log(`[GROUND-DIAGNOSTIC] Destroying particles`);
       if (projectile.particles) {
         projectile.particles.destroy();
-        projectile.particles = null;
       }
     } catch (_e) {
       console.log(`[GROUND-DIAGNOSTIC] Error destroying particles:`, _e);
@@ -2082,11 +2116,9 @@ export class SlingshotScene extends Phaser.Scene {
       console.log(`[GROUND-DIAGNOSTIC] Destroying sprite and ring`);
       if (projectile.sprite) {
         projectile.sprite.destroy();
-        projectile.sprite = null;
       }
       if (projectile.ring) {
         projectile.ring.destroy();
-        projectile.ring = null;
       }
     } catch (error) {
       console.log(`[GROUND-DIAGNOSTIC] Error destroying objects:`, error);
@@ -2116,7 +2148,6 @@ export class SlingshotScene extends Phaser.Scene {
       console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile particles`);
       if (projectile.particles) {
         projectile.particles.destroy();
-        projectile.particles = null;
       }
     } catch (_e) {
       console.log(`[GROUND-DIAGNOSTIC] Error destroying active projectile particles:`, _e);
@@ -2126,11 +2157,9 @@ export class SlingshotScene extends Phaser.Scene {
       console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile sprite and ring`);
       if (projectile.sprite) {
         projectile.sprite.destroy();
-        projectile.sprite = null;
       }
       if (projectile.ring) {
         projectile.ring.destroy();
-        projectile.ring = null;
       }
     } catch (error) {
       console.log(`[GROUND-DIAGNOSTIC] Error destroying active projectile objects:`, error);
@@ -3236,6 +3265,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.roundComplete = true;
     this.sequenceActive = false;
     
+    // CRITICAL: Tear down joypad state immediately to prevent lingering UI
+    this.clearJoypadState();
+    
     // Clean up sequence timer
     if (this.sequenceTimer) {
       this.sequenceTimer.remove();
@@ -3484,10 +3516,12 @@ export class SlingshotScene extends Phaser.Scene {
   private nextRound(): void {
     this.currentRound++;
     this.roundComplete = false;
+    
+    // CRITICAL: Tear down joypad state to prevent lingering UI during countdown
+    this.clearJoypadState();
 
     this.targets.forEach((target) => this.removeTarget(target));
     this.targets = [];
-    this.prepareNextShot();
 
     // Reset streak BEFORE countdown
     this.resetStreakBeforeCountdown();
