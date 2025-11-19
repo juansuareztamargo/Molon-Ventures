@@ -2777,8 +2777,10 @@ export class SlingshotScene extends Phaser.Scene {
     };
     
     // Update streak display
-    this.streakCounterText.setText(`Streak: ${this.consecutiveHits}`);
-    
+    if (this.streakCounterText && this.streakCounterText.active) {
+     this.streakCounterText.setText(`Streak: ${this.consecutiveHits}`);
+    }
+
     // Apply streak increment cue
     this.applyStreakIncrementCue();
     
@@ -2804,9 +2806,11 @@ export class SlingshotScene extends Phaser.Scene {
     this.consecutivePerfects = 0;
     
     // Update streak displays
-    this.streakCounterText.setText('Streak: 0');
+    if (this.streakCounterText && this.streakCounterText.active) {
+     this.streakCounterText.setText('Streak: 0');
+    }
     this.refreshMultiplierDisplay();
-    
+
     // Flash red briefly to indicate streak broken
     this.resetStreakDisplay();
   }
@@ -3483,17 +3487,26 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private updatePowderText(): void {
+    // Check if text objects exist and are valid before accessing them
+    if (!this.powderValue || !this.powderValue.active) {
+      return;
+    }
+    
     // Update the new separated value element
     this.powderValue.setText(this.powder.toString());
     
     // Also update the hidden original for backward compatibility
-    this.powderText.setText(`POWDER: ${this.powder}`);
+    if (this.powderText && this.powderText.active) {
+      this.powderText.setText(`POWDER: ${this.powder}`);
+    }
 
     this.layoutPowderHud();
   }
 
   private layoutPowderHud(): void {
-    if (!this.powderLabel || !this.powderValue || !this.transactionText) {
+    if (!this.powderLabel || !this.powderLabel.active || 
+        !this.powderValue || !this.powderValue.active || 
+        !this.transactionText || !this.transactionText.active) {
       return;
     }
 
@@ -3586,7 +3599,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private showTransactionText(amount: number, type: 'cost' | 'reward'): void {
-    if (!this.transactionText) {
+    if (!this.transactionText || !this.transactionText.active) {
       return;
     }
 
@@ -3613,7 +3626,7 @@ export class SlingshotScene extends Phaser.Scene {
       delay: 400,
       ease: 'Cubic.easeOut',
       onComplete: () => {
-        if (this.transactionText) {
+        if (this.transactionText && this.transactionText.active) {
           this.transactionText.setVisible(false);
           this.transactionText.setText('');
         }
@@ -3640,7 +3653,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.transactionTween = undefined;
     }
 
-    if (this.transactionText) {
+    if (this.transactionText && this.transactionText.active) {
       this.transactionText.setVisible(false);
       this.transactionText.setAlpha(0);
       this.transactionText.setText('');
@@ -3721,6 +3734,11 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private applyStreakIncrementCue(): void {
+    // Check if text object exists and is valid before accessing it
+    if (!this.streakMultiplierText || !this.streakMultiplierText.active) {
+      return;
+    }
+    
     // Only animate if multiplier display is visible (multiplier > 1)
     if (this.streakMultiplierText.visible) {
       this.tweens.add({
@@ -3733,6 +3751,11 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private applyMultiplierUpgradeCue(): void {
+    // Check if text object exists and is valid before accessing it
+    if (!this.streakMultiplierText || !this.streakMultiplierText.active) {
+      return;
+    }
+    
     // Only animate if multiplier display is visible (multiplier > 1)
     if (this.streakMultiplierText.visible) {
       this.tweens.add({
@@ -3748,12 +3771,19 @@ export class SlingshotScene extends Phaser.Scene {
       this.streakMultiplierText.setColor('#ffff00');
 
       this.time.delayedCall(250, () => {
-        this.streakMultiplierText.setColor(originalColor);
+        if (this.streakMultiplierText && this.streakMultiplierText.active) {
+          this.streakMultiplierText.setColor(originalColor);
+        }
       });
     }
   }
 
   private refreshMultiplierDisplay(): void {
+    // Check if text object exists and is valid before accessing it
+    if (!this.streakMultiplierText || !this.streakMultiplierText.active) {
+      return;
+    }
+    
     if (this.streakMultiplier > 1) {
       // Show multiplier text with correct value
       this.streakMultiplierText.setVisible(true);
@@ -3771,22 +3801,35 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private resetStreakDisplay(): void {
+    // Check if text object exists and is valid before accessing it
+    if (!this.streakMultiplierText || !this.streakMultiplierText.active) {
+      return;
+    }
+    
     // Only animate if multiplier display is visible (multiplier > 1)
     if (this.streakMultiplierText.visible) {
       const originalColor = '#ffaa00'; // Orange - original multiplier color
       this.streakMultiplierText.setColor('#ff0000');
 
       this.time.delayedCall(300, () => {
-        this.streakMultiplierText.setColor(originalColor);
+        if (this.streakMultiplierText && this.streakMultiplierText.active) {
+          this.streakMultiplierText.setColor(originalColor);
+        }
       });
     }
   }
 
   private updateRoundText(): void {
+    if (!this.roundText || !this.roundText.active) {
+      return;
+    }
     this.roundText.setText(`Round ${this.currentRound}`);
   }
 
   private updateSequenceProgressText(): void {
+    if (!this.sequenceProgressText || !this.sequenceProgressText.active) {
+      return;
+    }
     const completed = this.targetsInRound - this.targetsRemainingInRound;
     this.sequenceProgressText.setText(`Targets: ${completed}/${this.targetsInRound}`);
   }
@@ -4029,8 +4072,8 @@ export class SlingshotScene extends Phaser.Scene {
     this.streakMultiplier = 1;
 
     // Update UI displays if they exist
-    if (this.streakCounterText) {
-      this.streakCounterText.setText('Streak: 0');
+    if (this.streakCounterText && this.streakCounterText.active) {
+     this.streakCounterText.setText('Streak: 0');
     }
     
     // Use centralized method to hide multiplier text (no x1 should show)
