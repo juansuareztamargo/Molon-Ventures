@@ -618,6 +618,9 @@ export class SlingshotScene extends Phaser.Scene {
     this.targets = [];
 
     // CRITICAL: Enable input after countdown completes
+    // NOTE: clearJoypadState() sets slingshotEnabled = false
+    // This MUST be re-enabled by startRound() countdown logic
+    // Do NOT remove this re-enablement or input will be permanently blocked
     this.slingshotEnabled = true;
     console.log('[INPUT] New sequence started, slingshot enabled and ready for input');
 
@@ -1307,6 +1310,51 @@ export class SlingshotScene extends Phaser.Scene {
     this.activePointer = undefined;
     this.pointerOffsetX = 0;
     this.pointerOffsetY = 0;
+  }
+
+  private clearJoypadState(): void {
+    // Check if already cleared
+    if (!this.joypad && !this.isDragging) {
+      console.log('[INPUT] Joypad already cleared, skipping');
+      return;
+    }
+
+    console.log('[INPUT] Clearing joypad state');
+    
+    try {
+      // Destroy joypad container
+      if (this.joypad) {
+        this.destroyJoypad();
+        console.log('[INPUT] Joypad container destroyed');
+      }
+      
+      // Call prepareNextShot to clean any pre-launch projectile
+      this.prepareNextShot();
+      
+      // Reset drag tracking
+      this.dragStartX = 0;
+      this.dragStartY = 0;
+      this.isDragging = false;
+      
+      // Clear snapped velocity
+      this.snappedVelocity = undefined;
+      
+      // Disable slingshot until countdown re-enables it
+      this.slingshotEnabled = false;
+      console.log('[INPUT] Slingshot disabled until next countdown');
+      
+      console.log('[INPUT] Joypad state cleared successfully');
+    } catch (error) {
+      console.error('[INPUT] Error clearing joypad state:', error);
+      if (error instanceof Error) {
+        console.error(error.stack);
+      }
+      // Ensure safe state even if error occurs
+      this.joypad = undefined;
+      this.isDragging = false;
+      this.slingshotEnabled = false;
+      this.snappedVelocity = undefined;
+    }
   }
 
   private resetDragState(): void {
@@ -3268,6 +3316,9 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private handleSequenceComplete(): void {
+    // Clear joypad BEFORE showing any overlays
+    this.clearJoypadState();
+    
     this.roundComplete = true;
     this.sequenceActive = false;
     
@@ -3404,9 +3455,8 @@ export class SlingshotScene extends Phaser.Scene {
         // Clear pending transaction feedback
         this.clearPowderTransactionFeedback();
         
-        // Clean up any existing projectiles and joypad
-        this.prepareNextShot();
-        this.destroyJoypad();
+        // Clear joypad BEFORE showing any overlays
+        this.clearJoypadState();
         
         // Clean up any remaining targets
         this.targets.forEach(target => this.removeTarget(target));
@@ -3517,12 +3567,14 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private nextRound(): void {
+    // Clear joypad BEFORE showing any overlays
+    this.clearJoypadState();
+    
     this.currentRound++;
     this.roundComplete = false;
 
     this.targets.forEach((target) => this.removeTarget(target));
     this.targets = [];
-    this.prepareNextShot();
 
     // Reset streak BEFORE countdown
     this.resetStreakBeforeCountdown();
@@ -3533,6 +3585,9 @@ export class SlingshotScene extends Phaser.Scene {
 
   private triggerGameOver(): void {
     if (this.gameOver) return;
+    
+    // Clear joypad BEFORE showing game over overlay
+    this.clearJoypadState();
     
     this.clearPowderTransactionFeedback();
     
@@ -3554,10 +3609,6 @@ export class SlingshotScene extends Phaser.Scene {
       }
     });
     this.activeProjectiles = [];
-    
-    // Clean up current projectile
-    this.prepareNextShot();
-    this.destroyJoypad();
     
     // Clean up targets
     this.targets.forEach(target => this.removeTarget(target));
