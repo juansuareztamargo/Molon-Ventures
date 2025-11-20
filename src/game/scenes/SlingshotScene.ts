@@ -2597,7 +2597,7 @@ export class SlingshotScene extends Phaser.Scene {
     const currentColor = targetData.graphic.fillColor;
 
     let powderReward: number = POWDER_REWARDS.RED;
-    let hitQuality = 'RED';
+    let hitQuality = 'WELL DONE';
 
     if (currentColor === TARGET_COLORS.PURPLE) {
       powderReward = POWDER_REWARDS.PURPLE;
@@ -2607,10 +2607,10 @@ export class SlingshotScene extends Phaser.Scene {
       hitQuality = 'GOOD';
     } else if (currentColor === TARGET_COLORS.ORANGE) {
       powderReward = POWDER_REWARDS.ORANGE;
-      hitQuality = 'OKAY';
+      hitQuality = 'NICE';
     } else {
       powderReward = POWDER_REWARDS.RED;
-      hitQuality = 'HIT';
+      hitQuality = 'WELL DONE';
     }
 
     // Apply advanced powder mechanics - now returns breakdown
@@ -2627,6 +2627,11 @@ export class SlingshotScene extends Phaser.Scene {
     this.displayPowderTransactionFeedback(breakdown.finalTotal, true);
     this.animatePowderCounter(oldPowder, this.powder, true);
     
+    // Helper function to convert color number to CSS hex string
+    const colorToCss = (color: number): string => {
+      return '#' + color.toString(16).padStart(6, '0');
+    };
+
     // Create progressive reward display at circle center
     this.createProgressiveRewardDisplay(targetData, breakdown, currentColor);
 
@@ -2635,7 +2640,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     const hitText = this.add.text(x, y - 20, hitQuality, {
       fontSize: '24px',
-      color: '#ffffff',
+      color: colorToCss(currentColor),
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 4,
