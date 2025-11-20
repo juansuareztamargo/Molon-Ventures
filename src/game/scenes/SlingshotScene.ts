@@ -58,7 +58,7 @@ interface ProjectileData {
 
 interface StatusIndicatorRequest {
   mainText: string;
-  subText: string;
+  subText?: string;
   color: string;
   requestedAt: number;
 }
@@ -1769,7 +1769,6 @@ export class SlingshotScene extends Phaser.Scene {
     py = this.joypad.centerY;
     let drawVy = vy;
 
-    const lineColor = isSnapped ? 0x00ff00 : COLORS.WARNING;
     const lineAlpha = isSnapped ? 0.7 : 0.45;
     
     // Interpolate base trajectory thickness from 2px to 6px based on power
@@ -3028,7 +3027,7 @@ export class SlingshotScene extends Phaser.Scene {
       strokeThickness: 3
     }).setOrigin(0.5);
 
-    const sub = this.add.text(0, STATUS_INDICATOR_SUBTEXT_OFFSET, request.subText, {
+    const sub = this.add.text(0, STATUS_INDICATOR_SUBTEXT_OFFSET, request.subText || '', {
       fontSize: '24px',
       color: request.color,
       fontStyle: 'bold',
