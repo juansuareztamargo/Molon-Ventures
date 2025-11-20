@@ -6,6 +6,7 @@ import { createButton, createTextStyle } from '@/utils/helpers';
 const JOYPAD_BASE_RADIUS = 82;
 const JOYPAD_KNOB_RADIUS = 26;
 const MISS_EDGE_PADDING = 50;
+const TOP_ESCAPE_PADDING = 50;
 const STATUS_INDICATOR_BASE_Y = 180;
 const STATUS_INDICATOR_SPACING = 70;
 const STATUS_INDICATOR_MAX = 3;
@@ -148,7 +149,7 @@ export class SlingshotScene extends Phaser.Scene {
   private statusIndicatorQueue: StatusIndicatorRequest[] = [];
   private statusIndicatorLastRequestTime: number | null = null;
   private statusIndicatorBurstCount: number = 0;
-
+  
   constructor() {
     super({ key: SCENES.SLINGSHOT });
     this.slingshotEnabled = true; // Initialize as enabled
@@ -226,6 +227,18 @@ export class SlingshotScene extends Phaser.Scene {
       });
       this.targets = [];
     }
+
+    // Clean up any remaining active projectiles
+    this.activeProjectiles.forEach((projectile) => {
+      try {
+        this.stopTrailEmitter(projectile, 'reset-state-cleanup');
+        if (projectile.sprite) projectile.sprite.destroy();
+        if (projectile.ring) projectile.ring.destroy();
+      } catch (_error) {
+        // Ignore cleanup errors during scene reset
+      }
+    });
+    this.activeProjectiles = [];
 
     this.resetDragState();
 
@@ -383,10 +396,12 @@ export class SlingshotScene extends Phaser.Scene {
       const body = sprite.body as Phaser.Physics.Arcade.Body;
 
       // Only despawn on left/right edges, allow projectile to go off top and come back down
+      // But if sequence is not active, also destroy projectiles that exit the top
       const isOffscreen =
         sprite.x < -50 ||
         sprite.x > this.scale.width + 50 ||
-        sprite.y > this.scale.height + 50;
+        sprite.y > this.scale.height + 50 ||
+        (!this.sequenceActive && sprite.y < -TOP_ESCAPE_PADDING);
 
       const hasLowVelocity =
         Math.abs(body.velocity.x) < 1 &&
@@ -396,8 +411,9 @@ export class SlingshotScene extends Phaser.Scene {
 
       // Handle off-screen projectiles even after sequence completes
       if (isOffscreen && !this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
-        console.log('[OFF-SCREEN] Projectile detected off-screen, cleaning up...');
-        this.handleOffscreenProjectile();
+        const reason = (!this.sequenceActive && sprite.y < -TOP_ESCAPE_PADDING) ? 'top-escape-post-sequence' : 'offscreen';
+        console.log(`[OFF-SCREEN] Projectile detected off-screen (${reason}), cleaning up...`);
+        this.handleOffscreenProjectile({ reason });
       } else if (hasLowVelocity && isOnGround && !this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
         console.log('[GROUND-FADE] Projectile detected on ground, destroying immediately');
         this.destroyProjectileImmediately();
@@ -450,10 +466,12 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
       // Only despawn on left/right edges, allow projectile to go off top and come back down
+      // But if sequence is not active, also destroy projectiles that exit the top
       const isOffscreen =
         sprite.x < -50 ||
         sprite.x > this.scale.width + 50 ||
-        sprite.y > this.scale.height + 50;
+        sprite.y > this.scale.height + 50 ||
+        (!this.sequenceActive && sprite.y < -TOP_ESCAPE_PADDING);
 
       const hasLowVelocity =
         Math.abs(body.velocity.x) < 1 &&
@@ -463,8 +481,9 @@ export class SlingshotScene extends Phaser.Scene {
 
       // Handle off-screen projectiles
       if (isOffscreen && !projectile.fadingOut && !projectile.shouldDestroy) {
-        console.log('[OFF-SCREEN] Active projectile detected off-screen, cleaning up...');
-        this.handleOffscreenActiveProjectile(projectile, i);
+        const reason = (!this.sequenceActive && sprite.y < -TOP_ESCAPE_PADDING) ? 'top-escape-post-sequence' : 'offscreen';
+        console.log(`[OFF-SCREEN] Active projectile detected off-screen (${reason}), cleaning up...`);
+        this.handleOffscreenActiveProjectile(projectile, i, { reason });
         continue;
       }
 
@@ -1268,6 +1287,7 @@ export class SlingshotScene extends Phaser.Scene {
       graphics.fillCircle(2, 2, 2);
       graphics.generateTexture('trail-particle', 4, 4);
       graphics.destroy();
+      console.log('[PARTICLES] Trail texture created (runs once)');
     }
   }
 
@@ -1278,11 +1298,14 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.ensureTrailTexture();
 
-    // CRITICAL: Create emitter at origin (0, 0) as specified in requirements
+    // Note: Each projectile gets its own emitter (Phaser doesn't have reusable manager concept for this use case)
+    // The improved visibility settings will still apply
+
+    // Create emitter with improved visibility settings
     const emitter = this.add.particles(0, 0, 'trail-particle', {
       speed: 0,
-      scale: { start: 0.4, end: 0 },
-      alpha: { start: 0.4, end: 0 },
+      scale: { start: 0.6, end: 0 }, // Bumped from 0.4 to 0.6 for better visibility
+      alpha: { start: 0.6, end: 0 }, // Bumped from 0.4 to 0.6 for better visibility
       lifespan: 300,
       frequency: 50,
       blendMode: 'NORMAL',
@@ -1291,7 +1314,7 @@ export class SlingshotScene extends Phaser.Scene {
     emitter.setDepth(58);
     emitter.stop();
     projectile.particles = emitter;
-    console.log('[PARTICLES] Grey trail particle emitter created at origin (subtle, 300ms lifespan)');
+    console.log('[PARTICLES] Grey trail particle emitter created using cached manager (improved visibility)');
   }
 
   private startTrailEmitter(projectile: ProjectileData): void {
@@ -2126,8 +2149,9 @@ export class SlingshotScene extends Phaser.Scene {
     return true;
   }
 
-  private handleOffscreenProjectile(): void {
-    console.log('[OFF-SCREEN] handleOffscreenProjectile called');
+  private handleOffscreenProjectile(options: { reason?: string } = {}): void {
+    const { reason = 'offscreen' } = options;
+    console.log(`[OFF-SCREEN] handleOffscreenProjectile called (${reason})`);
     
     if (!this.currentProjectile) {
       console.log('[OFF-SCREEN] No projectile to clean up');
@@ -2146,7 +2170,7 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
-    console.log('[OFF-SCREEN] Starting cleanup sequence - projectile position:', 
+    console.log(`[OFF-SCREEN] Starting cleanup sequence - projectile position:`, 
       projectile.sprite.x, projectile.sprite.y);
 
     try {
@@ -2199,10 +2223,14 @@ export class SlingshotScene extends Phaser.Scene {
         },
       });
 
-      this.missesInSequence++;
-
-      // Handle miss mechanics (reset streaks/bonus)
-      this.onMiss();
+      // Only count as miss if it's a true miss (not post-sequence top escape)
+      if (reason !== 'top-escape-post-sequence') {
+        this.missesInSequence++;
+        // Handle miss mechanics (reset streaks/bonus)
+        this.onMiss();
+      } else {
+        console.log('[OFF-SCREEN] Skipping miss counter for post-sequence top escape');
+      }
 
       // Stop physics IMMEDIATELY
       try {
@@ -2260,6 +2288,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private destroyProjectileOnGroundImpact(): void {
+    console.log(`[GROUND-IMPACT] destroyProjectileOnGroundImpact() CALLED`);
     console.log(`[GROUND-DIAGNOSTIC] destroyProjectileOnGroundImpact() CALLED`);
     
     if (!this.currentProjectile) {
@@ -2281,18 +2310,19 @@ export class SlingshotScene extends Phaser.Scene {
       if (projectile.sprite) {
         console.log(`[GROUND-DIAGNOSTIC] Starting fade at (${projectile.sprite.x.toFixed(0)}, ${projectile.sprite.y.toFixed(0)})`);
       }
-      
+
       // Register as miss immediately
       this.missesInSequence++;
       this.onMiss();
-      
+
       // Create particle burst at impact location
       if (projectile.sprite) {
         const impactX = projectile.sprite.x;
         const impactY = projectile.sprite.y;
+        console.log(`[GROUND-IMPACT] Creating dust burst for current projectile at (${impactX.toFixed(0)}, ${impactY.toFixed(0)})`);
         this.createGroundImpactParticles(impactX, impactY);
       }
-      
+
       // Stop physics immediately
       if (projectile.sprite) {
         try {
@@ -2363,6 +2393,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private destroyActiveProjectileOnGroundImpact(projectile: ProjectileData, index: number): void {
+    console.log(`[GROUND-IMPACT] destroyActiveProjectileOnGroundImpact() CALLED for index ${index}`);
     console.log(`[GROUND-DIAGNOSTIC] destroyActiveProjectileOnGroundImpact() CALLED for index ${index}`);
     
     if (!projectile) {
@@ -2386,14 +2417,15 @@ export class SlingshotScene extends Phaser.Scene {
       // Register as miss immediately
       this.missesInSequence++;
       this.onMiss();
-      
+
       // Create particle burst at impact location
       if (projectile.sprite) {
         const impactX = projectile.sprite.x;
         const impactY = projectile.sprite.y;
+        console.log(`[GROUND-IMPACT] Creating dust burst for active projectile at (${impactX.toFixed(0)}, ${impactY.toFixed(0)})`);
         this.createGroundImpactParticles(impactX, impactY);
       }
-      
+
       // Stop physics immediately
       if (projectile.sprite) {
         try {
@@ -2469,6 +2501,7 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
+    console.log('[GROUND-IMPACT] destroyProjectileImmediately() CALLED');
     console.log('[GROUND-FADE] Destroying projectile immediately');
     
     const projectile = this.currentProjectile;
@@ -2489,6 +2522,7 @@ export class SlingshotScene extends Phaser.Scene {
     if (projectile.sprite) {
       const impactX = projectile.sprite.x;
       const impactY = projectile.sprite.y;
+      console.log(`[GROUND-IMPACT] Creating dust burst for immediate destruction at (${impactX.toFixed(0)}, ${impactY.toFixed(0)})`);
       this.createGroundImpactParticles(impactX, impactY);
     }
 
@@ -2535,6 +2569,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private completeProjectileDestruction(): void {
+    console.log(`[GROUND-IMPACT] completeProjectileDestruction() CALLED`);
     console.log(`[GROUND-DIAGNOSTIC] completeProjectileDestruction() CALLED`);
     
     if (!this.currentProjectile) {
@@ -2573,6 +2608,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private completeActiveProjectileDestruction(projectile: ProjectileData, index: number): void {
+    console.log(`[GROUND-IMPACT] completeActiveProjectileDestruction() CALLED for index ${index}`);
     console.log(`[GROUND-DIAGNOSTIC] completeActiveProjectileDestruction() CALLED for index ${index}`);
     
     if (!projectile || !projectile.sprite || !projectile.sprite.active) {
@@ -2606,7 +2642,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private createGroundImpactParticles(x: number, y: number): void {
-    console.log('[GROUND-IMPACT] Creating ground impact particle burst at', x, y);
+    console.log(`[GROUND-IMPACT] Creating ground impact particle burst at (${x.toFixed(0)}, ${y.toFixed(0)})`);
     
     // Cache particle texture for dust effect to avoid regenerating graphics
     const dustKey = 'dust_particle_brown';
@@ -3274,8 +3310,9 @@ export class SlingshotScene extends Phaser.Scene {
     console.log('[CLEANUP] Active projectile cleanup complete. Remaining active:', this.activeProjectiles.length);
   }
 
-  private handleOffscreenActiveProjectile(projectile: ProjectileData, index: number): void {
-    console.log('[OFF-SCREEN] handleOffscreenActiveProjectile called');
+  private handleOffscreenActiveProjectile(projectile: ProjectileData, index: number, options: { reason?: string } = {}): void {
+    const { reason = 'offscreen' } = options;
+    console.log(`[OFF-SCREEN] handleOffscreenActiveProjectile called (${reason})`);
     
     if (projectile.fadingOut || projectile.shouldDestroy) {
       console.log('[OFF-SCREEN] Projectile already being cleaned up, skipping');
@@ -3335,10 +3372,14 @@ export class SlingshotScene extends Phaser.Scene {
         },
       });
 
-      this.missesInSequence++;
-
-      // Handle miss mechanics (reset streaks/bonus)
-      this.onMiss();
+      // Only count as miss if it's a true miss (not post-sequence top escape)
+      if (reason !== 'top-escape-post-sequence') {
+        this.missesInSequence++;
+        // Handle miss mechanics (reset streaks/bonus)
+        this.onMiss();
+      } else {
+        console.log('[OFF-SCREEN] Skipping miss counter for post-sequence top escape');
+      }
 
       // Stop physics IMMEDIATELY
       try {
