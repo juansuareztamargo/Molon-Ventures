@@ -1458,8 +1458,8 @@ export class SlingshotScene extends Phaser.Scene {
     
     if (launched) {
       console.log('[JOYPAD-DEBUG] Projectile launched successfully');
-      // Fade out cost label on successful launch
-      this.fadeOutJoypadCost('successful launch');
+      // Fade out cost label on successful launch with linger effect
+      this.fadeOutJoypadCost('successful launch', false, 450, 400);
     } else {
       console.log('[JOYPAD-DEBUG] Launch failed');
       const reason = this.shotBlockedDueToPowder ? 'insufficient powder' : 'launch failed';
@@ -1819,7 +1819,12 @@ export class SlingshotScene extends Phaser.Scene {
     }
   }
 
-  private fadeOutJoypadCost(reason: string = 'default', immediate: boolean = false): void {
+  private fadeOutJoypadCost(
+    reason: string = 'default',
+    immediate: boolean = false,
+    holdDurationMs: number = 0,
+    fadeDurationMs: number = 200
+  ): void {
     if (!this.joypad || !this.joypad.costText) {
       return;
     }
@@ -1867,31 +1872,88 @@ export class SlingshotScene extends Phaser.Scene {
       costText.y = joypad.centerY;
     }
 
-    joypad.costTween = this.tweens.add({
-      targets: costText,
-      alpha: 0,
-      duration: 200,
-      ease: 'Quad.easeOut',
-      onComplete: () => {
-        try {
-          costText.destroy();
-        } catch (_error) {
-          // Ignore destruction errors
-        }
+    // If holdDurationMs is specified, use a sequence of tweens (hold then fade)
+    if (holdDurationMs > 0) {
+      console.log(
+        `[JOYPAD] Cost label lingering: ${holdDurationMs}ms hold + ${fadeDurationMs}ms fade (${reason})`
+      );
 
-        if (this.joypad && this.joypad.costText === costText) {
-          this.joypad.costText = undefined;
-          this.joypad.costTween = undefined;
-        }
+      joypad.costTween = this.tweens.add({
+        targets: costText,
+        duration: holdDurationMs,
+        onComplete: () => {
+          // After hold completes, fade out
+          if (joypad.costTween && !joypad.costTween.isDestroyed()) {
+            joypad.costTween = undefined;
+          }
 
-        console.log(`[JOYPAD] Cost label faded (${reason})`);
-      },
-      onStop: () => {
-        if (this.joypad && this.joypad.costTween) {
-          this.joypad.costTween = undefined;
-        }
-      },
-    });
+          if (costText.active && costText.scene) {
+            joypad.costTween = this.tweens.add({
+              targets: costText,
+              alpha: 0,
+              duration: fadeDurationMs,
+              ease: 'Quad.easeOut',
+              onComplete: () => {
+                try {
+                  costText.destroy();
+                } catch (_error) {
+                  // Ignore destruction errors
+                }
+
+                if (this.joypad && this.joypad.costText === costText) {
+                  this.joypad.costText = undefined;
+                  this.joypad.costTween = undefined;
+                }
+
+                console.log(`[JOYPAD] Cost label faded after linger (${reason})`);
+              },
+              onStop: () => {
+                if (this.joypad && this.joypad.costTween) {
+                  this.joypad.costTween = undefined;
+                }
+              },
+            });
+          } else {
+            // Text was destroyed during hold, clean up references
+            if (this.joypad && this.joypad.costText === costText) {
+              this.joypad.costText = undefined;
+            }
+          }
+        },
+        onStop: () => {
+          if (this.joypad && this.joypad.costTween) {
+            this.joypad.costTween = undefined;
+          }
+        },
+      });
+    } else {
+      // Immediate fade without hold (backward compatible)
+      joypad.costTween = this.tweens.add({
+        targets: costText,
+        alpha: 0,
+        duration: fadeDurationMs,
+        ease: 'Quad.easeOut',
+        onComplete: () => {
+          try {
+            costText.destroy();
+          } catch (_error) {
+            // Ignore destruction errors
+          }
+
+          if (this.joypad && this.joypad.costText === costText) {
+            this.joypad.costText = undefined;
+            this.joypad.costTween = undefined;
+          }
+
+          console.log(`[JOYPAD] Cost label faded (${reason})`);
+        },
+        onStop: () => {
+          if (this.joypad && this.joypad.costTween) {
+            this.joypad.costTween = undefined;
+          }
+        },
+      });
+    }
   }
 
   private destroyJoypad(): void {
