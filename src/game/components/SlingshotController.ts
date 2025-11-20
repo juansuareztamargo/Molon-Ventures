@@ -98,8 +98,13 @@ export class SlingshotController {
     this.carriage.lineStyle(2, 0x654321);
     this.carriage.strokeCircle(0, 0, carriageRadius);
     this.scene.add.existing(this.carriage);
-    this.carriage.setInteractive(new Phaser.Geom.Circle(0, 0, carriageRadius), Phaser.Geom.Circle.Contains);
-    (this.carriage as unknown as { input: { useHandCursor: boolean } }).input.useHandCursor = true;
+    this.carriage.setInteractive(
+      new Phaser.Geom.Circle(0, 0, carriageRadius),
+      Phaser.Geom.Circle.Contains
+    );
+    (
+      this.carriage as unknown as { input: { useHandCursor: boolean } }
+    ).input.useHandCursor = true;
 
     // Create trajectory graphics
     this.trajectoryGraphics = this.scene.make.graphics({
@@ -196,7 +201,12 @@ export class SlingshotController {
     );
   }
 
-  private drawTrajectoryPreview(dx: number, dy: number, limited: number, actual: number): void {
+  private drawTrajectoryPreview(
+    dx: number,
+    dy: number,
+    limited: number,
+    actual: number
+  ): void {
     if (!this.trajectoryGraphics || !this.carriage) return;
 
     this.trajectoryGraphics.clear();
@@ -216,9 +226,18 @@ export class SlingshotController {
 
       // Draw power indicator
       const powerPercent = limited / 150;
-      const color = powerPercent > 0.7 ? 0xff0000 : powerPercent > 0.4 ? 0xffff00 : 0x00ff00;
+      const color =
+        powerPercent > 0.7
+          ? 0xff0000
+          : powerPercent > 0.4
+            ? 0xffff00
+            : 0x00ff00;
       this.trajectoryGraphics.fillStyle(color, 0.5);
-      this.trajectoryGraphics.fillCircle(this.carriage.x, this.carriage.y, 5 + powerPercent * 10);
+      this.trajectoryGraphics.fillCircle(
+        this.carriage.x,
+        this.carriage.y,
+        5 + powerPercent * 10
+      );
     }
   }
 
@@ -232,7 +251,8 @@ export class SlingshotController {
     const dy = this.dragStartPos.y - this.currentDragPos.y;
 
     // Apply power multiplier based on difficulty
-    const powerMultiplier = this.config.powerMultiplierPerDifficulty[this.currentDifficulty] || 1;
+    const powerMultiplier =
+      this.config.powerMultiplierPerDifficulty[this.currentDifficulty] || 1;
     const velocityMultiplier = powerMultiplier * (this.config.maxPower / 100);
 
     const velocityX = dx * velocityMultiplier;

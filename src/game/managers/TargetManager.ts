@@ -1,5 +1,10 @@
 import { Scene } from 'phaser';
-import { TARGET_CONFIG, TargetColor, DifficultyLevel, getDifficultySettings } from '@/config/targetConfig';
+import {
+  TARGET_CONFIG,
+  TargetColor,
+  DifficultyLevel,
+  getDifficultySettings,
+} from '@/config/targetConfig';
 import { DifficultySettings } from '@/game/types';
 
 export interface TargetEvents {
@@ -7,7 +12,10 @@ export interface TargetEvents {
   'size-threshold': { radius: number; percentage: number };
   'target-complete': { finalRadius: number };
   'target-respawn': { position: { x: number; y: number } };
-  'difficulty-changed': { oldDifficulty: DifficultyLevel; newDifficulty: DifficultyLevel };
+  'difficulty-changed': {
+    oldDifficulty: DifficultyLevel;
+    newDifficulty: DifficultyLevel;
+  };
 }
 
 export class TargetManager {
@@ -20,7 +28,7 @@ export class TargetManager {
   private uiText?: Phaser.GameObjects.Text;
   private currentDifficulty: DifficultyLevel = 'NORMAL';
   private difficultySettings: DifficultySettings;
-  
+
   // Event emitters
   private eventEmitter: Phaser.Events.EventEmitter;
 
@@ -31,44 +39,40 @@ export class TargetManager {
     this.difficultySettings = getDifficultySettings(difficulty);
     this.currentRadius = this.difficultySettings.startRadius;
     this.startTime = 0;
-    
+
     this.createTarget();
     this.createUI();
   }
 
   private createTarget(): void {
     const position = this.getRandomSpawnPosition();
-    
+
     this.target = this.scene.add.circle(
       position.x,
       position.y,
       this.difficultySettings.startRadius,
       0xe74c3c // Start with red color
     );
-    
+
     this.target.setOrigin(0.5);
     this.target.setInteractive();
   }
 
   private createUI(): void {
     // Create UI text for timing phase indicator
-    this.uiText = this.scene.add.text(
-      10,
-      10,
-      'Phase: RED',
-      {
-        fontSize: '16px',
-        color: '#ffffff',
-        backgroundColor: '#000000',
-        padding: { x: 10, y: 5 },
-      }
-    );
+    this.uiText = this.scene.add.text(10, 10, 'Phase: RED', {
+      fontSize: '16px',
+      color: '#ffffff',
+      backgroundColor: '#000000',
+      padding: { x: 10, y: 5 },
+    });
     this.uiText.setScrollFactor(0); // Fixed position
     this.uiText.setDepth(1000); // Render on top
   }
 
   private getRandomSpawnPosition(): { x: number; y: number } {
-    const margin = TARGET_CONFIG.SPAWN_MARGIN + this.difficultySettings.startRadius;
+    const margin =
+      TARGET_CONFIG.SPAWN_MARGIN + this.difficultySettings.startRadius;
     const x = Phaser.Math.Between(
       margin,
       this.scene.cameras.main.width - margin
@@ -82,11 +86,11 @@ export class TargetManager {
 
   public start(): void {
     if (this.isShrinking) return;
-    
+
     this.isShrinking = true;
     this.startTime = Date.now();
     this.currentRadius = this.difficultySettings.startRadius;
-    
+
     // Reset target to initial state
     this.target.setRadius(this.difficultySettings.startRadius);
     this.target.setFillStyle(0xe74c3c);
@@ -102,16 +106,16 @@ export class TargetManager {
 
   public reset(): void {
     this.stop();
-    
+
     // Move to new position
     const position = this.getRandomSpawnPosition();
     this.target.setPosition(position.x, position.y);
-    
+
     // Reset visual state
     this.target.setRadius(this.difficultySettings.startRadius);
     this.target.setFillStyle(0xe74c3c);
     this.currentRadius = this.difficultySettings.startRadius;
-    
+
     // Emit respawn event
     this.eventEmitter.emit('target-respawn', { position });
   }
@@ -120,25 +124,30 @@ export class TargetManager {
     if (!this.isShrinking) return;
 
     const elapsed = Date.now() - this.startTime;
-    const progress = Math.min(elapsed / this.difficultySettings.shrinkDuration, 1);
-    
+    const progress = Math.min(
+      elapsed / this.difficultySettings.shrinkDuration,
+      1
+    );
+
     // Calculate current radius
-    const radiusRange = this.difficultySettings.startRadius - this.difficultySettings.minRadius;
-    this.currentRadius = this.difficultySettings.startRadius - (radiusRange * progress);
+    const radiusRange =
+      this.difficultySettings.startRadius - this.difficultySettings.minRadius;
+    this.currentRadius =
+      this.difficultySettings.startRadius - radiusRange * progress;
     this.target.setRadius(this.currentRadius);
-    
+
     // Calculate time remaining percentage
     const timeRemaining = 1 - progress;
-    
+
     // Update color based on time remaining
     this.updateColor(timeRemaining);
-    
+
     // Update UI
     this.updateUI(timeRemaining);
-    
+
     // Emit size threshold events
     this.emitSizeThresholds(progress);
-    
+
     // Check if shrinking is complete
     if (progress >= 1) {
       this.onShrinkComplete();
@@ -148,7 +157,7 @@ export class TargetManager {
   private updateColor(timeRemaining: number): void {
     let newColor: TargetColor;
     let colorValue: number;
-    
+
     if (timeRemaining >= TARGET_CONFIG.COLOR_THRESHOLDS.RED) {
       newColor = 'RED';
       colorValue = 0xe74c3c;
@@ -162,23 +171,23 @@ export class TargetManager {
       newColor = 'PURPLE';
       colorValue = 0x9b59b6;
     }
-    
+
     // Only update if color actually changed
     const currentColor = this.target.fillColor;
     if (currentColor !== colorValue) {
       this.target.setFillStyle(colorValue);
-      
+
       // Emit color change event
       this.eventEmitter.emit('color-change', {
         color: newColor,
-        timeRemaining: timeRemaining * TARGET_CONFIG.SHRINK_DURATION
+        timeRemaining: timeRemaining * TARGET_CONFIG.SHRINK_DURATION,
       });
     }
   }
 
   private updateUI(timeRemaining: number): void {
     if (!this.uiText) return;
-    
+
     let phase: string;
     if (timeRemaining >= TARGET_CONFIG.COLOR_THRESHOLDS.RED) {
       phase = 'RED';
@@ -189,8 +198,10 @@ export class TargetManager {
     } else {
       phase = 'PURPLE';
     }
-    
-    const timeMs = Math.floor(timeRemaining * this.difficultySettings.shrinkDuration);
+
+    const timeMs = Math.floor(
+      timeRemaining * this.difficultySettings.shrinkDuration
+    );
     this.uiText.setText(
       `Difficulty: ${this.currentDifficulty} | Phase: ${phase} | Time: ${(timeMs / 1000).toFixed(1)}s`
     );
@@ -199,12 +210,13 @@ export class TargetManager {
   private emitSizeThresholds(progress: number): void {
     // Emit events at specific size thresholds
     const thresholds = [0.25, 0.5, 0.75];
-    
+
     for (const threshold of thresholds) {
-      if (Math.abs(progress - threshold) < 0.01) { // Small window to emit once
+      if (Math.abs(progress - threshold) < 0.01) {
+        // Small window to emit once
         this.eventEmitter.emit('size-threshold', {
           radius: this.currentRadius,
-          percentage: threshold * 100
+          percentage: threshold * 100,
         });
       }
     }
@@ -212,12 +224,12 @@ export class TargetManager {
 
   private onShrinkComplete(): void {
     this.isShrinking = false;
-    
+
     // Emit completion event
     this.eventEmitter.emit('target-complete', {
-      finalRadius: this.currentRadius
+      finalRadius: this.currentRadius,
     });
-    
+
     // Schedule respawn
     this.respawnTimer = this.scene.time.delayedCall(
       this.difficultySettings.respawnDelay,
@@ -263,18 +275,18 @@ export class TargetManager {
     const oldDifficulty = this.currentDifficulty;
     this.currentDifficulty = difficulty;
     this.difficultySettings = getDifficultySettings(difficulty);
-    
+
     // Stop current animation and reset with new settings
     const wasShrinking = this.isShrinking;
     this.stop();
     this.reset();
-    
+
     // Emit difficulty change event
     this.eventEmitter.emit('difficulty-changed', {
       oldDifficulty,
-      newDifficulty: difficulty
+      newDifficulty: difficulty,
     });
-    
+
     // Restart if it was running
     if (wasShrinking) {
       this.start();

@@ -33,7 +33,10 @@ export class ProjectileManager {
     this.eventEmitter = new Phaser.Events.EventEmitter();
   }
 
-  public fireProjectile(config: ProjectileConfig, difficulty: DifficultyLevel): void {
+  public fireProjectile(
+    config: ProjectileConfig,
+    difficulty: DifficultyLevel
+  ): void {
     if (!this.canFireProjectile) return;
 
     // Create projectile
@@ -72,17 +75,17 @@ export class ProjectileManager {
       }
 
       // Check for collision with target
-      const collisionResult = this.collisionFeedback.detectHit(projectile, this.currentDifficulty);
+      const collisionResult = this.collisionFeedback.detectHit(
+        projectile,
+        this.currentDifficulty
+      );
 
       if (collisionResult.hit && collisionResult.result) {
         // Display feedback
-        this.collisionFeedback.displayHitFeedback(
-          collisionResult.result,
-          {
-            x: this.targetManager.getTarget().x,
-            y: this.targetManager.getTarget().y,
-          }
-        );
+        this.collisionFeedback.displayHitFeedback(collisionResult.result, {
+          x: this.targetManager.getTarget().x,
+          y: this.targetManager.getTarget().y,
+        });
 
         this.eventEmitter.emit('projectile-hit', {
           projectile,
