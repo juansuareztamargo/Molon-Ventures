@@ -1776,8 +1776,9 @@ export class SlingshotScene extends Phaser.Scene {
     const baseLineWidth = 2 + powerRatio * 4;
     
     // Calculate gradient widths: taper from thin at origin to thick at target
+    // Start width is 15% thinner, end width is now 38% thicker (20% increase from 1.15)
     const startWidth = baseLineWidth * 0.85; // 15% thinner at origin
-    const endWidth = baseLineWidth * 1.15; // 15% thicker at target
+    const endWidth = baseLineWidth * 1.38; // 38% thicker at target
     // Add +1px when snapped for visual distinction to the end width
     const finalEndWidth = isSnapped ? endWidth + 1 : endWidth;
     
@@ -1823,16 +1824,64 @@ export class SlingshotScene extends Phaser.Scene {
       }
     }
 
+    // Draw trajectory with gradient width and color interpolation
+    // Colors: red at origin (0xff0000), green at target (0x00ff00)
+    const colorStart = { r: 255, g: 0, b: 0 }; // Red
+    const colorEnd = { r: 0, g: 255, b: 0 }; // Green
+
+    const interpolatedColors: { color: number; width: number }[] = [];
+
     // Draw trajectory with gradient width by drawing segments
     for (let i = 0; i < points.length - 1; i++) {
       const progress = i / (points.length - 1); // Normalized progress (0 to 1)
       const segmentWidth = startWidth + (finalEndWidth - startWidth) * progress;
       
-      this.joypad.trajectoryLine.lineStyle(segmentWidth, lineColor, lineAlpha);
+      // Interpolate RGB values linearly from red to green
+      const r = Math.round(
+        colorStart.r * (1 - progress) + colorEnd.r * progress
+      );
+      const g = Math.round(
+        colorStart.g * (1 - progress) + colorEnd.g * progress
+      );
+      const b = Math.round(
+        colorStart.b * (1 - progress) + colorEnd.b * progress
+      );
+
+      // Convert RGB to 0xRRGGBB format
+      const interpolatedColor = (r << 16) | (g << 8) | b;
+
+      // Store for logging first segment
+      if (i === 0) {
+        interpolatedColors.push({
+          color: interpolatedColor,
+          width: segmentWidth,
+        });
+      }
+      if (i === points.length - 2) {
+        interpolatedColors.push({
+          color: interpolatedColor,
+          width: segmentWidth,
+        });
+      }
+
+      this.joypad.trajectoryLine.lineStyle(
+        segmentWidth,
+        interpolatedColor,
+        lineAlpha
+      );
       this.joypad.trajectoryLine.beginPath();
       this.joypad.trajectoryLine.moveTo(points[i].x, points[i].y);
       this.joypad.trajectoryLine.lineTo(points[i + 1].x, points[i + 1].y);
       this.joypad.trajectoryLine.strokePath();
+    }
+
+    // Log color interpolation for QA validation
+    if (interpolatedColors.length > 0) {
+      const startColor = interpolatedColors[0];
+      const endColor = interpolatedColors[interpolatedColors.length - 1];
+      console.log(
+        `[JOYPAD-DEBUG] Gradient colors: start=#${startColor.color.toString(16).padStart(6, '0')} (${startColor.width.toFixed(2)}px), end=#${endColor.color.toString(16).padStart(6, '0')} (${endColor.width.toFixed(2)}px)`
+      );
     }
 
     // Draw snap indicator if snapped to target
