@@ -89,10 +89,13 @@ export function calculateScore(
   if (tier === 'MISS') return 0;
 
   const tierConfig = SCORING_CONFIG.HIT_TIERS[tier];
-  const difficultyMultiplier = SCORING_CONFIG.DIFFICULTY_MULTIPLIERS[difficulty];
+  const difficultyMultiplier =
+    SCORING_CONFIG.DIFFICULTY_MULTIPLIERS[difficulty];
   const phaseBonus = colorPhaseProgress; // Bonus for hitting in later phases (more difficult)
 
-  return Math.round(tierConfig.baseScore * difficultyMultiplier * (1 + phaseBonus * 0.5));
+  return Math.round(
+    tierConfig.baseScore * difficultyMultiplier * (1 + phaseBonus * 0.5)
+  );
 }
 
 export function getHitResult(

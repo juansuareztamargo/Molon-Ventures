@@ -1,5 +1,10 @@
 import { Scene } from 'phaser';
-import { HitResult, HitTier, SCORING_CONFIG, getHitResult } from '@/config/scoringConfig';
+import {
+  HitResult,
+  HitTier,
+  SCORING_CONFIG,
+  getHitResult,
+} from '@/config/scoringConfig';
 import { DifficultyLevel } from '@/config/targetConfig';
 import { TargetManager } from '@/game/managers/TargetManager';
 import { Projectile } from '@/game/components/Projectile';
@@ -15,8 +20,8 @@ interface SimpleParticle {
 }
 
 export interface CollisionEvents {
-  'hit': { tier: HitTier; score: number; position: { x: number; y: number } };
-  'miss': { position: { x: number; y: number } };
+  hit: { tier: HitTier; score: number; position: { x: number; y: number } };
+  miss: { position: { x: number; y: number } };
   'score-updated': { totalScore: number };
 }
 
@@ -34,7 +39,7 @@ export class CollisionFeedbackManager {
     this.scene = scene;
     this.targetManager = targetManager;
     this.eventEmitter = new Phaser.Events.EventEmitter();
-    
+
     this.createUI();
   }
 
@@ -101,7 +106,10 @@ export class CollisionFeedbackManager {
       return { hit: true, result, colorPhaseProgress };
     }
 
-    return { hit: false, colorPhaseProgress: this.calculateColorPhaseProgress() };
+    return {
+      hit: false,
+      colorPhaseProgress: this.calculateColorPhaseProgress(),
+    };
   }
 
   private calculateColorPhaseProgress(): number {
@@ -113,17 +121,24 @@ export class CollisionFeedbackManager {
   }
 
   private calculateHitTier(): HitTier {
-    const radiusPercentage = this.targetManager.getCurrentRadius() / this.targetManager.getDifficultySettings().startRadius;
+    const radiusPercentage =
+      this.targetManager.getCurrentRadius() /
+      this.targetManager.getDifficultySettings().startRadius;
 
     if (radiusPercentage <= SCORING_CONFIG.HIT_TIERS.PERFECT.radiusThreshold) {
       return 'PERFECT';
-    } else if (radiusPercentage <= SCORING_CONFIG.HIT_TIERS.GOOD.radiusThreshold) {
+    } else if (
+      radiusPercentage <= SCORING_CONFIG.HIT_TIERS.GOOD.radiusThreshold
+    ) {
       return 'GOOD';
     }
     return 'BASIC';
   }
 
-  public displayHitFeedback(result: HitResult, position: { x: number; y: number }): void {
+  public displayHitFeedback(
+    result: HitResult,
+    position: { x: number; y: number }
+  ): void {
     // Display text feedback
     this.displayFeedbackText(result.feedback, position, result.color);
 
@@ -154,18 +169,13 @@ export class CollisionFeedbackManager {
     position: { x: number; y: number },
     color: number
   ): void {
-    const feedback = this.scene.add.text(
-      position.x,
-      position.y - 50,
-      text,
-      {
-        fontSize: '24px',
-        color: `#${color.toString(16).padStart(6, '0')}`,
-        fontStyle: 'bold',
-        backgroundColor: '#000000',
-        padding: { x: 8, y: 4 },
-      }
-    );
+    const feedback = this.scene.add.text(position.x, position.y - 50, text, {
+      fontSize: '24px',
+      color: `#${color.toString(16).padStart(6, '0')}`,
+      fontStyle: 'bold',
+      backgroundColor: '#000000',
+      padding: { x: 8, y: 4 },
+    });
 
     feedback.setOrigin(0.5);
     feedback.setDepth(1000);

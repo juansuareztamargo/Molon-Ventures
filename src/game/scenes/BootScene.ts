@@ -10,12 +10,17 @@ export class BootScene extends Phaser.Scene {
     const width = this.cameras.main.width;
     const height = this.cameras.main.height;
 
-    const loadingText = this.add.text(width / 2, height / 2 - 50, 'Loading...', {
-      fontSize: '32px',
-      color: '#ffffff',
-      fontFamily: 'Arial, sans-serif',
-      fontStyle: 'bold',
-    });
+    const loadingText = this.add.text(
+      width / 2,
+      height / 2 - 50,
+      'Loading...',
+      {
+        fontSize: '32px',
+        color: '#ffffff',
+        fontFamily: 'Arial, sans-serif',
+        fontStyle: 'bold',
+      }
+    );
     loadingText.setOrigin(0.5);
 
     const progressBar = this.add.graphics();

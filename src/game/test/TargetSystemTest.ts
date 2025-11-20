@@ -18,12 +18,12 @@ export class TargetSystemTest {
    */
   public runAllTests(): { [key: string]: boolean } {
     console.log('🧪 Running Target System Tests...');
-    
+
     this.testInitialization();
     this.testDifficultyChange();
     this.testEventSystem();
     this.testTargetInteraction();
-    
+
     this.printResults();
     return this.testResults;
   }
@@ -33,12 +33,12 @@ export class TargetSystemTest {
       // Test that target manager initializes correctly
       const target = this.targetManager.getTarget();
       const difficulty = this.targetManager.getCurrentDifficulty();
-      
-      this.testResults['initialization'] = 
-        target !== undefined && 
+
+      this.testResults['initialization'] =
+        target !== undefined &&
         difficulty === 'NORMAL' &&
         this.targetManager.getCurrentRadius() > 0;
-      
+
       console.log('✅ Initialization test passed');
     } catch (error) {
       this.testResults['initialization'] = false;
@@ -48,17 +48,22 @@ export class TargetSystemTest {
 
   private testDifficultyChange(): void {
     try {
-      const difficulties: DifficultyLevel[] = ['EASY', 'HARD', 'EXPERT', 'NORMAL'];
+      const difficulties: DifficultyLevel[] = [
+        'EASY',
+        'HARD',
+        'EXPERT',
+        'NORMAL',
+      ];
       let allChangesSuccessful = true;
-      
-      difficulties.forEach(difficulty => {
+
+      difficulties.forEach((difficulty) => {
         this.targetManager.setDifficulty(difficulty);
         const currentDifficulty = this.targetManager.getCurrentDifficulty();
         if (currentDifficulty !== difficulty) {
           allChangesSuccessful = false;
         }
       });
-      
+
       this.testResults['difficulty_change'] = allChangesSuccessful;
       console.log('✅ Difficulty change test passed');
     } catch (error) {
@@ -73,15 +78,15 @@ export class TargetSystemTest {
       this.targetManager.on('color-change', () => {
         // Event received - test passes
       });
-      
+
       // Start animation to trigger events
       this.targetManager.start();
-      
+
       // Simulate some time passing
       setTimeout(() => {
         this.targetManager.update();
       }, 100);
-      
+
       this.testResults['event_system'] = true; // Basic test - events are set up
       console.log('✅ Event system test passed');
     } catch (error) {
@@ -93,7 +98,7 @@ export class TargetSystemTest {
   private testTargetInteraction(): void {
     try {
       const target = this.targetManager.getTarget();
-      
+
       // Test that target is interactive
       this.testResults['target_interaction'] = target.input !== undefined;
       console.log('✅ Target interaction test passed');
@@ -106,9 +111,11 @@ export class TargetSystemTest {
   private printResults(): void {
     console.log('\n📊 Test Results:');
     Object.entries(this.testResults).forEach(([test, passed]) => {
-      console.log(`${passed ? '✅' : '❌'} ${test.replace('_', ' ').toUpperCase()}`);
+      console.log(
+        `${passed ? '✅' : '❌'} ${test.replace('_', ' ').toUpperCase()}`
+      );
     });
-    
+
     const totalTests = Object.keys(this.testResults).length;
     const passedTests = Object.values(this.testResults).filter(Boolean).length;
     console.log(`\n🎯 ${passedTests}/${totalTests} tests passed`);

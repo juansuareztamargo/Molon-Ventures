@@ -41,9 +41,17 @@ export class Projectile {
       y: 0,
     } as Phaser.Types.GameObjects.Graphics.Options);
     graphics.fillStyle(this.config.fillColor);
-    graphics.fillCircle(this.config.radius, this.config.radius, this.config.radius);
+    graphics.fillCircle(
+      this.config.radius,
+      this.config.radius,
+      this.config.radius
+    );
 
-    graphics.generateTexture('projectile', this.config.radius * 2, this.config.radius * 2);
+    graphics.generateTexture(
+      'projectile',
+      this.config.radius * 2,
+      this.config.radius * 2
+    );
     graphics.destroy();
 
     // Create physics sprite with the generated texture

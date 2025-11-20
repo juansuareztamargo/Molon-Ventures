@@ -14,7 +14,10 @@ export interface DifficultyBalanceSettings {
   scoreMultiplier: number;
 }
 
-export const DIFFICULTY_BALANCE_CONFIG: Record<DifficultyLevel, DifficultyBalanceSettings> = {
+export const DIFFICULTY_BALANCE_CONFIG: Record<
+  DifficultyLevel,
+  DifficultyBalanceSettings
+> = {
   EASY: {
     difficulty: 'EASY',
     // Target: Slower, larger, more forgiving

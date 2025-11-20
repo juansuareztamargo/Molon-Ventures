@@ -19,16 +19,16 @@ export class MainScene extends Scene {
   create(): void {
     // Create TargetManager
     this.targetManager = new TargetManager(this);
-    
+
     // Set up event listeners
     this.setupTargetEvents();
-    
+
     // Create instructions
     this.createInstructions();
-    
+
     // Start the target system
     this.targetManager.start();
-    
+
     console.log('MainScene: Created with TargetManager');
   }
 
@@ -37,12 +37,16 @@ export class MainScene extends Scene {
 
     // Listen for color changes
     this.targetManager.on('color-change', (data) => {
-      console.log(`Color changed to: ${data.color}, Time remaining: ${data.timeRemaining}ms`);
+      console.log(
+        `Color changed to: ${data.color}, Time remaining: ${data.timeRemaining}ms`
+      );
     });
 
     // Listen for size thresholds
     this.targetManager.on('size-threshold', (data) => {
-      console.log(`Size threshold reached: ${data.radius}px (${data.percentage}%)`);
+      console.log(
+        `Size threshold reached: ${data.radius}px (${data.percentage}%)`
+      );
     });
 
     // Listen for target completion
@@ -52,12 +56,16 @@ export class MainScene extends Scene {
 
     // Listen for respawn
     this.targetManager.on('target-respawn', (data) => {
-      console.log(`Target respawned at: (${data.position.x}, ${data.position.y})`);
+      console.log(
+        `Target respawned at: (${data.position.x}, ${data.position.y})`
+      );
     });
 
     // Listen for difficulty changes
     this.targetManager.on('difficulty-changed', (data) => {
-      console.log(`Difficulty changed from ${data.oldDifficulty} to ${data.newDifficulty}`);
+      console.log(
+        `Difficulty changed from ${data.oldDifficulty} to ${data.newDifficulty}`
+      );
     });
   }
 
@@ -92,31 +100,40 @@ export class MainScene extends Scene {
   }
 
   private createDifficultyButtons(): void {
-    const difficulties: DifficultyLevel[] = ['EASY', 'NORMAL', 'HARD', 'EXPERT'];
+    const difficulties: DifficultyLevel[] = [
+      'EASY',
+      'NORMAL',
+      'HARD',
+      'EXPERT',
+    ];
     const buttonWidth = 80;
     const buttonHeight = 30;
-    const startX = this.cameras.main.width / 2 - (difficulties.length * buttonWidth) / 2;
+    const startX =
+      this.cameras.main.width / 2 - (difficulties.length * buttonWidth) / 2;
     const y = this.cameras.main.height - 40;
 
     difficulties.forEach((difficulty, index) => {
       const x = startX + index * (buttonWidth + 10);
-      
+
       // Create button background
-      const button = this.add.rectangle(x, y, buttonWidth, buttonHeight, 0x3498db)
+      const button = this.add
+        .rectangle(x, y, buttonWidth, buttonHeight, 0x3498db)
         .setOrigin(0.5)
         .setInteractive();
-      
+
       // Create button text
-      this.add.text(x, y, difficulty, {
-        fontSize: '12px',
-        color: '#ffffff',
-      }).setOrigin(0.5);
-      
+      this.add
+        .text(x, y, difficulty, {
+          fontSize: '12px',
+          color: '#ffffff',
+        })
+        .setOrigin(0.5);
+
       // Hover effects
       button.on('pointerover', () => {
         button.setFillStyle(0x2980b9);
       });
-      
+
       button.on('pointerout', () => {
         button.setFillStyle(0x3498db);
       });
@@ -132,10 +149,16 @@ export class MainScene extends Scene {
 
     // Add keyboard controls
     this.input.keyboard?.on('keydown-ONE', () => this.changeDifficulty('EASY'));
-    this.input.keyboard?.on('keydown-TWO', () => this.changeDifficulty('NORMAL'));
-    this.input.keyboard?.on('keydown-THREE', () => this.changeDifficulty('HARD'));
-    this.input.keyboard?.on('keydown-FOUR', () => this.changeDifficulty('EXPERT'));
-    
+    this.input.keyboard?.on('keydown-TWO', () =>
+      this.changeDifficulty('NORMAL')
+    );
+    this.input.keyboard?.on('keydown-THREE', () =>
+      this.changeDifficulty('HARD')
+    );
+    this.input.keyboard?.on('keydown-FOUR', () =>
+      this.changeDifficulty('EXPERT')
+    );
+
     // Add test runner (press T to run tests)
     this.input.keyboard?.on('keydown-T', () => this.runTests());
   }
@@ -151,10 +174,10 @@ export class MainScene extends Scene {
     console.log('🧪 Running Target System Tests...');
     this.testRunner = new TargetSystemTest(this);
     const results = this.testRunner.runAllTests();
-    
+
     // Display results on screen
     this.displayTestResults(results);
-    
+
     // Clean up after tests
     setTimeout(() => {
       if (this.testRunner) {
@@ -167,14 +190,17 @@ export class MainScene extends Scene {
   private displayTestResults(results: { [key: string]: boolean }): void {
     const totalTests = Object.keys(results).length;
     const passedTests = Object.values(results).filter(Boolean).length;
-    
+
     const resultText = this.add.text(
       this.cameras.main.width / 2,
       this.cameras.main.height / 2,
       `Test Results: ${passedTests}/${totalTests} passed\n\n` +
-      Object.entries(results)
-        .map(([test, passed]) => `${passed ? '✅' : '❌'} ${test.replace('_', ' ').toUpperCase()}`)
-        .join('\n'),
+        Object.entries(results)
+          .map(
+            ([test, passed]) =>
+              `${passed ? '✅' : '❌'} ${test.replace('_', ' ').toUpperCase()}`
+          )
+          .join('\n'),
       {
         fontSize: '18px',
         color: '#ffffff',
@@ -183,11 +209,11 @@ export class MainScene extends Scene {
         align: 'center',
       }
     );
-    
+
     resultText.setOrigin(0.5);
     resultText.setScrollFactor(0);
     resultText.setDepth(2000);
-    
+
     // Remove text after 3 seconds
     this.time.delayedCall(3000, () => {
       resultText.destroy();
