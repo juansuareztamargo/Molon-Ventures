@@ -58,7 +58,7 @@ interface ProjectileData {
 
 interface StatusIndicatorRequest {
   mainText: string;
-  subText: string;
+  subText?: string;
   color: string;
   requestedAt: number;
 }
@@ -1769,15 +1769,15 @@ export class SlingshotScene extends Phaser.Scene {
     py = this.joypad.centerY;
     let drawVy = vy;
 
-    const lineColor = isSnapped ? 0x00ff00 : COLORS.WARNING;
     const lineAlpha = isSnapped ? 0.7 : 0.45;
     
     // Interpolate base trajectory thickness from 2px to 6px based on power
     const baseLineWidth = 2 + powerRatio * 4;
     
     // Calculate gradient widths: taper from thin at origin to thick at target
+    // Start width is 15% thinner, end width is now 38% thicker (20% increase from 1.15)
     const startWidth = baseLineWidth * 0.85; // 15% thinner at origin
-    const endWidth = baseLineWidth * 1.15; // 15% thicker at target
+    const endWidth = baseLineWidth * 1.38; // 38% thicker at target
     // Add +1px when snapped for visual distinction to the end width
     const finalEndWidth = isSnapped ? endWidth + 1 : endWidth;
     
@@ -1823,16 +1823,64 @@ export class SlingshotScene extends Phaser.Scene {
       }
     }
 
+    // Draw trajectory with gradient width and color interpolation
+    // Colors: red at origin (0xff0000), green at target (0x00ff00)
+    const colorStart = { r: 255, g: 0, b: 0 }; // Red
+    const colorEnd = { r: 0, g: 255, b: 0 }; // Green
+
+    const interpolatedColors: { color: number; width: number }[] = [];
+
     // Draw trajectory with gradient width by drawing segments
     for (let i = 0; i < points.length - 1; i++) {
       const progress = i / (points.length - 1); // Normalized progress (0 to 1)
       const segmentWidth = startWidth + (finalEndWidth - startWidth) * progress;
       
-      this.joypad.trajectoryLine.lineStyle(segmentWidth, lineColor, lineAlpha);
+      // Interpolate RGB values linearly from red to green
+      const r = Math.round(
+        colorStart.r * (1 - progress) + colorEnd.r * progress
+      );
+      const g = Math.round(
+        colorStart.g * (1 - progress) + colorEnd.g * progress
+      );
+      const b = Math.round(
+        colorStart.b * (1 - progress) + colorEnd.b * progress
+      );
+
+      // Convert RGB to 0xRRGGBB format
+      const interpolatedColor = (r << 16) | (g << 8) | b;
+
+      // Store for logging first segment
+      if (i === 0) {
+        interpolatedColors.push({
+          color: interpolatedColor,
+          width: segmentWidth,
+        });
+      }
+      if (i === points.length - 2) {
+        interpolatedColors.push({
+          color: interpolatedColor,
+          width: segmentWidth,
+        });
+      }
+
+      this.joypad.trajectoryLine.lineStyle(
+        segmentWidth,
+        interpolatedColor,
+        lineAlpha
+      );
       this.joypad.trajectoryLine.beginPath();
       this.joypad.trajectoryLine.moveTo(points[i].x, points[i].y);
       this.joypad.trajectoryLine.lineTo(points[i + 1].x, points[i + 1].y);
       this.joypad.trajectoryLine.strokePath();
+    }
+
+    // Log color interpolation for QA validation
+    if (interpolatedColors.length > 0) {
+      const startColor = interpolatedColors[0];
+      const endColor = interpolatedColors[interpolatedColors.length - 1];
+      console.log(
+        `[JOYPAD-DEBUG] Gradient colors: start=#${startColor.color.toString(16).padStart(6, '0')} (${startColor.width.toFixed(2)}px), end=#${endColor.color.toString(16).padStart(6, '0')} (${endColor.width.toFixed(2)}px)`
+      );
     }
 
     // Draw snap indicator if snapped to target
@@ -2845,7 +2893,7 @@ export class SlingshotScene extends Phaser.Scene {
       if (this.consecutivePerfects === 3) {
         this.bonusStageActive = true;
         this.activateBonusModeVisual();
-        this.showStatusIndicator('BONUS STAGE ACTIVATED!', '#00ff00', 'BONUS STAGE');
+        this.showStatusIndicator('BONUS MODE ENABLED', '#00ff00');
       }
       
       // Apply bonus multiplier
@@ -2857,7 +2905,7 @@ export class SlingshotScene extends Phaser.Scene {
       // Non-perfect hit - exit bonus
       if (this.bonusStageActive) {
         this.deactivateBonusModeVisual();
-        this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
+        this.showStatusIndicator('BONUS LOST', '#ff0000');
       }
       this.bonusStageActive = false;
       this.consecutivePerfects = 0;
@@ -2903,7 +2951,7 @@ export class SlingshotScene extends Phaser.Scene {
     // Exit bonus stage
     if (this.bonusStageActive) {
       this.deactivateBonusModeVisual();
-      this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
+      this.showStatusIndicator('BONUS LOST', '#ff0000');
     }
     this.bonusStageActive = false;
     this.consecutivePerfects = 0;
@@ -2941,7 +2989,11 @@ export class SlingshotScene extends Phaser.Scene {
     this.refreshMultiplierDisplay();
   }
 
-  private showStatusIndicator(mainText: string, color: string, subText: string): void {
+  private showStatusIndicator(
+    mainText: string,
+    color: string,
+    subText?: string
+  ): void {
     const request: StatusIndicatorRequest = {
       mainText,
       subText,
@@ -2975,7 +3027,7 @@ export class SlingshotScene extends Phaser.Scene {
       strokeThickness: 3
     }).setOrigin(0.5);
 
-    const sub = this.add.text(0, STATUS_INDICATOR_SUBTEXT_OFFSET, request.subText, {
+    const sub = this.add.text(0, STATUS_INDICATOR_SUBTEXT_OFFSET, request.subText || '', {
       fontSize: '24px',
       color: request.color,
       fontStyle: 'bold',
