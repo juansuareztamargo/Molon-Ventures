@@ -2894,7 +2894,7 @@ export class SlingshotScene extends Phaser.Scene {
       if (this.consecutivePerfects === 3) {
         this.bonusStageActive = true;
         this.activateBonusModeVisual();
-        this.showStatusIndicator('BONUS STAGE ACTIVATED!', '#00ff00', 'BONUS STAGE');
+        this.showStatusIndicator('BONUS MODE ENABLED', '#00ff00');
       }
       
       // Apply bonus multiplier
@@ -2906,7 +2906,7 @@ export class SlingshotScene extends Phaser.Scene {
       // Non-perfect hit - exit bonus
       if (this.bonusStageActive) {
         this.deactivateBonusModeVisual();
-        this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
+        this.showStatusIndicator('BONUS LOST', '#ff0000');
       }
       this.bonusStageActive = false;
       this.consecutivePerfects = 0;
@@ -2952,7 +2952,7 @@ export class SlingshotScene extends Phaser.Scene {
     // Exit bonus stage
     if (this.bonusStageActive) {
       this.deactivateBonusModeVisual();
-      this.showStatusIndicator('BONUS STAGE LOST', '#ff0000', 'BONUS LOST');
+      this.showStatusIndicator('BONUS LOST', '#ff0000');
     }
     this.bonusStageActive = false;
     this.consecutivePerfects = 0;
@@ -2990,7 +2990,11 @@ export class SlingshotScene extends Phaser.Scene {
     this.refreshMultiplierDisplay();
   }
 
-  private showStatusIndicator(mainText: string, color: string, subText: string): void {
+  private showStatusIndicator(
+    mainText: string,
+    color: string,
+    subText?: string
+  ): void {
     const request: StatusIndicatorRequest = {
       mainText,
       subText,
