@@ -84,6 +84,20 @@ interface RewardBreakdown {
   finalTotal: number;
 }
 
+interface RewardStageConfig {
+  key: string;
+  text: string;
+  color: string;
+  fontSize: number;
+  logMessage: string;
+  impactDuration: number;
+  holdDuration: number;
+  fadeDuration: number;
+  impactScale?: number;
+  holdScale?: number;
+  fadeScale?: number;
+}
+
 export class SlingshotScene extends Phaser.Scene {
   private currentRound: number = 1;
   private targetsInRound: number = 1;
@@ -981,143 +995,175 @@ export class SlingshotScene extends Phaser.Scene {
     
     const hitColorCss = colorToCss(hitColor);
     
-    // Stage 1: Show base amount in hit color
-    this.showStage1Base(x, y, breakdown, hitColorCss);
+    // Build sequence of reward stages
+    const sequence = this.buildRewardSequence(breakdown, hitColorCss);
+    
+    // Start playing the sequence
+    this.playRewardSequence(x, y, sequence, 0);
   }
   
-  private showStage1Base(x: number, y: number, breakdown: RewardBreakdown, hitColorCss: string): void {
-    console.log(`[REWARD] Stage 1: Base amount ${breakdown.baseAmount} in color ${hitColorCss}`);
+  private buildRewardSequence(breakdown: RewardBreakdown, hitColorCss: string): RewardStageConfig[] {
+    const sequence: RewardStageConfig[] = [];
+    const PINK = '#ff69b4';
+    const BLUE = '#4169e1';
+    const impactDuration = 400;
+    const holdDuration = 400;
+    const fadeDuration = 400;
     
-    const baseText = this.add.text(x, y, `${breakdown.baseAmount}`, {
-      fontSize: '48px',
+    // Stage 1: Base amount (hit color, smallest)
+    sequence.push({
+      key: 'base',
+      text: `${breakdown.baseAmount}`,
       color: hitColorCss,
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 3,
-      align: 'center'
-    }).setOrigin(0.5, 0.5);
+      fontSize: 44,
+      logMessage: `Base amount ${breakdown.baseAmount}`,
+      impactDuration,
+      holdDuration,
+      fadeDuration,
+      impactScale: 1.2,
+      holdScale: 1.25,
+      fadeScale: 1.32
+    });
     
-    baseText.setDepth(102);
-    
-    // Hold for 400ms, then fade over 600ms
-    this.time.delayedCall(400, () => {
-      this.tweens.add({
-        targets: baseText,
-        alpha: { from: 1, to: 0 },
-        duration: 600,
-        ease: 'Linear',
-        onComplete: () => {
-          try {
-            baseText.destroy();
-          } catch (_e) {
-            // Ignore destruction errors
-          }
-          
-          // Chain to Stage 2 or skip if no bonus
-          if (breakdown.bonusAmount > 0) {
-            this.showStage2Bonus(x, y, breakdown, hitColorCss);
-          } else if (breakdown.multiplier > 1) {
-            this.showStage3Multiplier(x, y, breakdown, hitColorCss);
-          }
-        }
+    // Stage 2: Bonus (if applicable) - pink, larger
+    if (breakdown.bonusAmount > 0) {
+      sequence.push({
+        key: 'bonus',
+        text: `+${breakdown.bonusAmount}`,
+        color: PINK,
+        fontSize: 52,
+        logMessage: `Bonus +${breakdown.bonusAmount}`,
+        impactDuration,
+        holdDuration,
+        fadeDuration,
+        impactScale: 1.28,
+        holdScale: 1.34,
+        fadeScale: 1.42
       });
+      
+      // Stage 3: Intermediate total (hit color, even larger)
+      sequence.push({
+        key: 'intermediate',
+        text: `${breakdown.intermediateAfterBonus}`,
+        color: hitColorCss,
+        fontSize: 60,
+        logMessage: `Intermediate total ${breakdown.intermediateAfterBonus}`,
+        impactDuration,
+        holdDuration,
+        fadeDuration,
+        impactScale: 1.34,
+        holdScale: 1.4,
+        fadeScale: 1.48
+      });
+    }
+    
+    // Stage 4: Multiplier (if applicable) - blue, larger still
+    if (breakdown.multiplier > 1) {
+      sequence.push({
+        key: 'multiplier',
+        text: `x${breakdown.multiplier}`,
+        color: BLUE,
+        fontSize: 68,
+        logMessage: `Multiplier x${breakdown.multiplier}`,
+        impactDuration,
+        holdDuration,
+        fadeDuration,
+        impactScale: 1.4,
+        holdScale: 1.46,
+        fadeScale: 1.54
+      });
+    }
+    
+    // Ensure final total step is always present and largest
+    const largestFont = sequence.reduce((max, stage) => Math.max(max, stage.fontSize), 0);
+    const finalFontSize = Math.max(largestFont + 8, 64);
+    sequence.push({
+      key: 'final',
+      text: `${breakdown.finalTotal}`,
+      color: hitColorCss,
+      fontSize: finalFontSize,
+      logMessage: `Final total ${breakdown.finalTotal}`,
+      impactDuration,
+      holdDuration: holdDuration + 200,
+      fadeDuration: fadeDuration + 100,
+      impactScale: 1.5,
+      holdScale: 1.56,
+      fadeScale: 1.68
+    });
+    
+    return sequence;
+  }
+  
+  private playRewardSequence(x: number, y: number, sequence: RewardStageConfig[], index: number): void {
+    if (index >= sequence.length || sequence.length === 0) {
+      return;
+    }
+    
+    const stage = sequence[index];
+    const nextIndex = index + 1;
+    const nextStageDelay = 60;
+    
+    console.log(`[REWARD] Stage ${index + 1}/${sequence.length}: ${stage.logMessage} (${stage.fontSize}px, ${stage.color})`);
+    
+    this.animateRewardStage(x, y, stage, () => {
+      if (nextIndex < sequence.length) {
+        this.time.delayedCall(nextStageDelay, () => {
+          this.playRewardSequence(x, y, sequence, nextIndex);
+        });
+      }
     });
   }
   
-  private showStage2Bonus(x: number, y: number, breakdown: RewardBreakdown, hitColorCss: string): void {
-    console.log(`[REWARD] Stage 2: Bonus +${breakdown.bonusAmount}, intermediate total ${breakdown.intermediateAfterBonus}`);
-    
-    // Pink bonus text on the left
-    const bonusText = this.add.text(x - 30, y, `+${breakdown.bonusAmount}`, {
-      fontSize: '32px',
-      color: '#ff69b4',
+  private animateRewardStage(x: number, y: number, stage: RewardStageConfig, onComplete: () => void): void {
+    const rewardText = this.add.text(x, y, stage.text, {
+      fontSize: `${stage.fontSize}px`,
+      color: stage.color,
       fontStyle: 'bold',
       stroke: '#000000',
-      strokeThickness: 3,
+      strokeThickness: 4,
       align: 'center'
     }).setOrigin(0.5, 0.5);
     
-    bonusText.setDepth(102);
+    rewardText.setDepth(102);
+    rewardText.setScale(0.6);
+    rewardText.setAlpha(0);
     
-    // Intermediate total on the right in hit color
-    const intermediateText = this.add.text(x + 30, y, `${breakdown.intermediateAfterBonus}`, {
-      fontSize: '40px',
-      color: hitColorCss,
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 3,
-      align: 'center'
-    }).setOrigin(0.5, 0.5);
+    const impactScale = stage.impactScale ?? 1.2;
+    const holdScale = stage.holdScale ?? impactScale + 0.06;
+    const fadeScale = stage.fadeScale ?? holdScale + 0.08;
     
-    intermediateText.setDepth(102);
-    
-    // Hold for 400ms, then fade over 600ms
-    this.time.delayedCall(400, () => {
-      this.tweens.add({
-        targets: [bonusText, intermediateText],
-        alpha: { from: 1, to: 0 },
-        duration: 600,
-        ease: 'Linear',
-        onComplete: () => {
-          try {
-            bonusText.destroy();
-            intermediateText.destroy();
-          } catch (_e) {
-            // Ignore destruction errors
+    this.tweens.add({
+      targets: rewardText,
+      scale: impactScale,
+      alpha: 1,
+      duration: stage.impactDuration,
+      ease: 'Back.Out',
+      onComplete: () => {
+        this.tweens.add({
+          targets: rewardText,
+          scale: holdScale,
+          alpha: 1,
+          duration: stage.holdDuration,
+          ease: 'Sine.InOut',
+          onComplete: () => {
+            this.tweens.add({
+              targets: rewardText,
+              scale: fadeScale,
+              alpha: 0,
+              duration: stage.fadeDuration,
+              ease: 'Cubic.In',
+              onComplete: () => {
+                try {
+                  rewardText.destroy();
+                } catch (_e) {
+                  // Ignore destruction errors
+                }
+                onComplete();
+              }
+            });
           }
-          
-          // Chain to Stage 3 if multiplier > 1
-          if (breakdown.multiplier > 1) {
-            this.showStage3Multiplier(x, y, breakdown, hitColorCss);
-          }
-        }
-      });
-    });
-  }
-  
-  private showStage3Multiplier(x: number, y: number, breakdown: RewardBreakdown, hitColorCss: string): void {
-    console.log(`[REWARD] Stage 3: Multiplier x${breakdown.multiplier}, final total ${breakdown.finalTotal}`);
-    
-    // Blue multiplier text on the left
-    const multiplierText = this.add.text(x - 35, y, `x${breakdown.multiplier}`, {
-      fontSize: '32px',
-      color: '#4169e1',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 3,
-      align: 'center'
-    }).setOrigin(0.5, 0.5);
-    
-    multiplierText.setDepth(102);
-    
-    // Final total on the right in hit color
-    const finalText = this.add.text(x + 35, y, `${breakdown.finalTotal}`, {
-      fontSize: '48px',
-      color: hitColorCss,
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 3,
-      align: 'center'
-    }).setOrigin(0.5, 0.5);
-    
-    finalText.setDepth(102);
-    
-    // Hold for 400ms, then fade over 600ms
-    this.time.delayedCall(400, () => {
-      this.tweens.add({
-        targets: [multiplierText, finalText],
-        alpha: { from: 1, to: 0 },
-        duration: 600,
-        ease: 'Linear',
-        onComplete: () => {
-          try {
-            multiplierText.destroy();
-            finalText.destroy();
-          } catch (_e) {
-            // Ignore destruction errors
-          }
-        }
-      });
+        });
+      }
     });
   }
 
