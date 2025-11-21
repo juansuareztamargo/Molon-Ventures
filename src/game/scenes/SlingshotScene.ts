@@ -7,7 +7,6 @@ const JOYPAD_BASE_RADIUS = 82;
 const JOYPAD_KNOB_RADIUS = 26;
 const MISS_EDGE_PADDING = 50;
 const TOP_ESCAPE_PADDING = 50;
-const STATUS_INDICATOR_BASE_Y = 180;
 const STATUS_INDICATOR_SPACING = 70;
 const STATUS_INDICATOR_MAX = 3;
 const STATUS_INDICATOR_ENTRY_DURATION = 260;
@@ -97,6 +96,10 @@ export class SlingshotScene extends Phaser.Scene {
   private sequenceProgressText!: Phaser.GameObjects.Text;
   private streakCounterText!: Phaser.GameObjects.Text;
   private streakMultiplierText!: Phaser.GameObjects.Text;
+
+  // Powder HUD positioning for status indicators
+  private powderHudPaddingX: number = 0;
+  private powderHudPaddingY: number = 0;
 
   private isDragging: boolean = false;
   private currentProjectile?: ProjectileData;
@@ -2899,7 +2902,7 @@ export class SlingshotScene extends Phaser.Scene {
       // Apply bonus multiplier
       if (this.bonusStageActive && this.consecutivePerfects > 3) {
         bonusAmount = this.consecutivePerfects - 3; // 1, 2, 3, 4...
-        this.showStatusIndicator(`+${bonusAmount} BONUS`, '#00ff00', 'BONUS');
+        this.showStatusIndicator(`+${bonusAmount} BONUS`, '#00ff00');
       }
     } else {
       // Non-perfect hit - exit bonus
@@ -3015,25 +3018,26 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private spawnStatusIndicator(request: StatusIndicatorRequest): void {
-    const container = this.add.container(this.cameras.main.centerX, STATUS_INDICATOR_BASE_Y);
+    // Position at left of screen below powder HUD
+    const container = this.add.container(this.powderHudPaddingX, this.powderHudPaddingY);
     container.setDepth(STATUS_INDICATOR_DEPTH);
     container.setAlpha(0);
 
     const main = this.add.text(0, 0, request.mainText, {
-      fontSize: '48px',
+      fontSize: '36px',
       color: request.color,
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 3
-    }).setOrigin(0.5);
+    }).setOrigin(0, 0.5);
 
     const sub = this.add.text(0, STATUS_INDICATOR_SUBTEXT_OFFSET, request.subText || '', {
-      fontSize: '24px',
+      fontSize: '20px',
       color: request.color,
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 2
-    }).setOrigin(0.5);
+    }).setOrigin(0, 0.5);
 
     container.add([main, sub]);
 
@@ -3061,8 +3065,10 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private layoutStatusIndicators(): void {
-    const baseY = STATUS_INDICATOR_BASE_Y;
+    // Position under powder HUD, stacked vertically
+    const baseY = this.powderHudPaddingY + 60; // Below powder HUD with spacing
     const spacing = STATUS_INDICATOR_SPACING;
+    const baseX = this.powderHudPaddingX;
 
     this.statusIndicators.forEach((indicator, index) => {
       const container = indicator.container;
@@ -3071,15 +3077,17 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
       container.setDepth(STATUS_INDICATOR_DEPTH);
+      const targetX = baseX;
       const targetY = baseY + index * spacing;
 
-      if (Math.abs(container.y - targetY) < 1) {
-        container.setY(targetY);
+      if (Math.abs(container.x - targetX) < 1 && Math.abs(container.y - targetY) < 1) {
+        container.setPosition(targetX, targetY);
         return;
       }
 
       this.tweens.add({
         targets: container,
+        x: targetX,
         y: targetY,
         duration: 200,
         ease: 'Quad.easeOut'
@@ -3557,10 +3565,10 @@ export class SlingshotScene extends Phaser.Scene {
     this.roundText.setDepth(100);
 
     // Structured powder HUD container (label, value, transaction)
-    const powderHudPaddingX = Math.max(20, width * 0.02);
-    const powderHudPaddingY = Math.max(24, height * 0.03);
+    this.powderHudPaddingX = Math.max(20, width * 0.02);
+    this.powderHudPaddingY = Math.max(24, height * 0.03);
 
-    this.powderHudContainer = this.add.container(powderHudPaddingX, powderHudPaddingY);
+    this.powderHudContainer = this.add.container(this.powderHudPaddingX, this.powderHudPaddingY);
     this.powderHudContainer.setDepth(100);
 
     this.powderLabel = this.add.text(0, 0, 'POWDER', {
@@ -3593,8 +3601,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Keep original powderText for backward compatibility with existing animation methods
     this.powderText = this.add.text(
-      powderHudPaddingX,
-      powderHudPaddingY - 14,
+      this.powderHudPaddingX,
+      this.powderHudPaddingY - 14,
       `POWDER: ${this.powder}`,
       createTextStyle('28px', '#FFD700')
     );
