@@ -53,7 +53,7 @@ interface ProjectileData {
   fadingOut: boolean;
   hasCollided: boolean;
   shouldDestroy: boolean;
-  particles?: Phaser.GameObjects.Particles.ParticleEmitter;
+  particlesEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
 }
 
 interface StatusIndicatorRequest {
@@ -195,6 +195,11 @@ export class SlingshotScene extends Phaser.Scene {
     this.clearStatusIndicators();
 
     if (this.currentProjectile) {
+      try {
+        this.stopTrailEmitter(this.currentProjectile, 'reset-state-current-cleanup');
+      } catch (_error) {
+        // Ignore cleanup errors during scene reset
+      }
       try {
         const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
         if (body) {
@@ -431,7 +436,7 @@ export class SlingshotScene extends Phaser.Scene {
 
       // Keep particle emitter following projectile and rotate arrow to velocity direction
       if (this.currentProjectile) {
-        const trailEmitter = this.currentProjectile.particles;
+        const trailEmitter = this.currentProjectile.particlesEmitter;
         if (trailEmitter && !this.currentProjectile.fadingOut) {
           trailEmitter.setPosition(sprite.x, sprite.y);
         }
@@ -505,7 +510,7 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
       // Keep particle emitter following projectile
-      const trailEmitter = projectile.particles;
+      const trailEmitter = projectile.particlesEmitter;
       if (trailEmitter && !projectile.fadingOut) {
         trailEmitter.setPosition(sprite.x, sprite.y);
       }
@@ -1298,14 +1303,12 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.ensureTrailTexture();
 
-    // Note: Each projectile gets its own emitter (Phaser doesn't have reusable manager concept for this use case)
-    // The improved visibility settings will still apply
-
     // Create emitter with improved visibility settings
+    // In Phaser 3.60+, this.add.particles returns a ParticleEmitter directly
     const emitter = this.add.particles(0, 0, 'trail-particle', {
       speed: 0,
-      scale: { start: 0.6, end: 0 }, // Bumped from 0.4 to 0.6 for better visibility
-      alpha: { start: 0.6, end: 0 }, // Bumped from 0.4 to 0.6 for better visibility
+      scale: { start: 0.6, end: 0 },
+      alpha: { start: 0.6, end: 0 },
       lifespan: 300,
       frequency: 50,
       blendMode: 'NORMAL',
@@ -1313,8 +1316,8 @@ export class SlingshotScene extends Phaser.Scene {
 
     emitter.setDepth(58);
     emitter.stop();
-    projectile.particles = emitter;
-    console.log('[PARTICLES] Grey trail particle emitter created using cached manager (improved visibility)');
+    projectile.particlesEmitter = emitter;
+    console.log('[PARTICLES] Grey trail particle emitter created (improved visibility)');
   }
 
   private startTrailEmitter(projectile: ProjectileData): void {
@@ -1322,11 +1325,11 @@ export class SlingshotScene extends Phaser.Scene {
       return;
     }
 
-    if (!projectile.particles) {
+    if (!projectile.particlesEmitter) {
       this.createTrailEmitter(projectile);
     }
 
-    const emitter = projectile.particles;
+    const emitter = projectile.particlesEmitter;
     if (!emitter) {
       return;
     }
@@ -1338,26 +1341,34 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private stopTrailEmitter(projectile: ProjectileData, reason: string = 'cleanup'): void {
-    if (!projectile.particles) {
+    if (!projectile.particlesEmitter) {
       console.log(`[PARTICLES] No trail emitter to stop (${reason})`);
       return;
     }
 
-    const emitter = projectile.particles;
-    projectile.particles = undefined;
+    const emitter = projectile.particlesEmitter;
+    projectile.particlesEmitter = undefined;
 
     try {
       emitter.stop();
       console.log(`[PARTICLES] Trail emission stopped (${reason})`);
     } catch (error) {
-      console.log(`[PARTICLES] Error stopping trail emitter (${reason}):`, error);
+      if (error instanceof Error) {
+        console.log(`[PARTICLES] Error stopping trail emitter (${reason}):`, error.message);
+      } else {
+        console.log(`[PARTICLES] Error stopping trail emitter (${reason}):`, error);
+      }
     }
 
     try {
       emitter.destroy();
       console.log(`[PARTICLES] Trail emitter destroyed (${reason}) - lifecycle complete`);
     } catch (error) {
-      console.log(`[PARTICLES] Error destroying trail emitter (${reason}):`, error);
+      if (error instanceof Error) {
+        console.log(`[PARTICLES] Error destroying trail emitter (${reason}):`, error.message);
+      } else {
+        console.log(`[PARTICLES] Error destroying trail emitter (${reason}):`, error);
+      }
     }
   }
 
