@@ -17,6 +17,13 @@ const STATUS_INDICATOR_BURST_THRESHOLD = 32;
 const STATUS_INDICATOR_DEPTH = 260;
 const STATUS_INDICATOR_SUBTEXT_OFFSET = 44;
 
+// Hit feedback timing constants for improved readability
+const JOYPAD_COST_HOLD_MS = 450;
+const JOYPAD_COST_FADE_MS = 400;
+const HIT_TEXT_FLOAT_MS = 300;
+const HIT_TEXT_HOLD_MS = 600;
+const HIT_TEXT_FADE_MS = 700;
+
 interface TargetData {
   sprite: Phaser.Physics.Arcade.Sprite;
   graphic: Phaser.GameObjects.Arc;
@@ -1496,7 +1503,7 @@ export class SlingshotScene extends Phaser.Scene {
     if (launched) {
       console.log('[JOYPAD-DEBUG] Projectile launched successfully');
       // Fade out cost label on successful launch with linger effect
-      this.fadeOutJoypadCost('successful launch', false, 450, 400);
+      this.fadeOutJoypadCost('successful launch', false, JOYPAD_COST_HOLD_MS, JOYPAD_COST_FADE_MS);
     } else {
       console.log('[JOYPAD-DEBUG] Launch failed');
       const reason = this.shotBlockedDueToPowder ? 'insufficient powder' : 'launch failed';
@@ -2835,19 +2842,38 @@ export class SlingshotScene extends Phaser.Scene {
     powderPopup.setOrigin(0.5);
     powderPopup.setDepth(100);
 
+    // Phase 1: Float upward briefly
     this.tweens.add({
       targets: [hitText, powderPopup],
-      y: `-=${70}`,
-      alpha: 0,
-      duration: 1000,
+      y: `-=${35}`,
+      duration: HIT_TEXT_FLOAT_MS,
       ease: 'Cubic.easeOut',
       onComplete: () => {
-        try {
-          hitText.destroy();
-          powderPopup.destroy();
-        } catch (_e) {
-          // Ignore if already destroyed
+        // Only proceed if text objects are still active
+        if (!hitText.active || !powderPopup.active) {
+          return;
         }
+
+        // Phase 2: Hold position then fade out
+        this.tweens.add({
+          targets: [hitText, powderPopup],
+          alpha: 0,
+          duration: HIT_TEXT_FADE_MS,
+          ease: 'Quad.easeOut',
+          delay: HIT_TEXT_HOLD_MS,
+          onComplete: () => {
+            try {
+              if (hitText.active) {
+                hitText.destroy();
+              }
+              if (powderPopup.active) {
+                powderPopup.destroy();
+              }
+            } catch (_e) {
+              // Ignore if already destroyed
+            }
+          },
+        });
       },
     });
 
