@@ -2692,6 +2692,10 @@ export class SlingshotScene extends Phaser.Scene {
   private createGroundImpactParticles(x: number, y: number): void {
     console.log(`[GROUND-IMPACT] Creating ground impact particle burst at (${x.toFixed(0)}, ${y.toFixed(0)})`);
     
+    // Clone coordinates immediately to guard against sprite destruction
+    const impactX = x;
+    const impactY = y;
+    
     // Cache particle texture for dust effect to avoid regenerating graphics
     const dustKey = 'dust_particle_brown';
     if (!this.textures.exists(dustKey)) {
@@ -2700,27 +2704,40 @@ export class SlingshotScene extends Phaser.Scene {
       graphics.fillCircle(3, 3, 3);
       graphics.generateTexture(dustKey, 6, 6);
       graphics.destroy();
+      console.log('[GROUND-IMPACT] Created dust particle texture');
     }
     
-    const particles = this.add.particles(0, 0, dustKey, {
-      speed: { min: -100, max: 100 },
+    // Create particle emitter with explicit configuration
+    // Position at (0, 0) for absolute positioning, then use emitParticleAt
+    const emitter = this.add.particles(0, 0, dustKey, {
+      speed: { min: 50, max: 150 },
       angle: { min: 240, max: 300 },
       scale: { start: 0.3, end: 0 },
       alpha: { start: 0.6, end: 0 },
       lifespan: 300,
       gravityY: 200,
-      frequency: -1,
-      quantity: 8
+      frequency: -1, // Manual emission only
+      blendMode: Phaser.BlendModes.NORMAL
     });
     
-    particles.emitParticleAt(x, y, 8);
-    console.log('[GROUND-IMPACT] Dust burst emitted at', x, y);
+    // Set depth above ground (ground is at depth 0, particles at 95)
+    emitter.setDepth(95);
     
-    this.time.delayedCall(400, () => {
+    console.log(`[GROUND-IMPACT] Emitter created at (0, 0), will emit at (${impactX.toFixed(0)}, ${impactY.toFixed(0)}), depth: 95, blend: NORMAL`);
+    
+    // Emit particles at the impact location using absolute positioning
+    emitter.emitParticleAt(impactX, impactY, 8);
+    console.log('[GROUND-IMPACT] Dust burst emitted (8 particles)');
+    
+    // Destroy emitter after lifespan + buffer (300ms lifespan + 200ms buffer = 500ms)
+    this.time.delayedCall(500, () => {
       try {
-        particles.destroy();
-      } catch (_e) {
-        // Ignore
+        if (emitter && emitter.active) {
+          emitter.destroy();
+          console.log('[GROUND-IMPACT] Particle emitter destroyed after timeout');
+        }
+      } catch (error) {
+        console.log('[GROUND-IMPACT] Error destroying particle emitter:', error);
       }
     });
   }
