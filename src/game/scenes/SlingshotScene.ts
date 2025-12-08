@@ -219,10 +219,6 @@ export class SlingshotScene extends Phaser.Scene {
 
     if (this.currentProjectile) {
       try {
-      } catch (_error) {
-        // Ignore cleanup errors during scene reset
-      }
-      try {
         const body = this.currentProjectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
         if (body) {
           body.stop();
@@ -363,11 +359,9 @@ export class SlingshotScene extends Phaser.Scene {
         !this.currentProjectile.shouldDestroy &&
         !this.currentProjectile.fadingOut
       ) {
-        console.log(`[GROUND-DIAGNOSTIC] CONDITIONS MET FOR DESTRUCTION!`)
-        const impactX = this.currentProjectile.sprite.x
-        const impactY = this.currentProjectile.sprite.y
-        this.destroyProjectileOnGroundImpact()
-      } else if (!isAboveGround) {
+         console.log(`[GROUND-DIAGNOSTIC] CONDITIONS MET FOR DESTRUCTION!`)
+         this.destroyProjectileOnGroundImpact()
+       } else if (!isAboveGround) {
         console.log(`[GROUND-DIAGNOSTIC] NOT destroying because:`)
         if (this.isDragging) console.log(`    - isDragging: true`)
         if (this.currentProjectile.shouldDestroy) console.log(`    - shouldDestroy: true`)
@@ -417,8 +411,6 @@ export class SlingshotScene extends Phaser.Scene {
         
         if (!isAboveGround && !projectile.fadingOut && !projectile.shouldDestroy) {
           console.log(`[GROUND-DIAGNOSTIC] CONDITIONS MET FOR DESTRUCTION!`)
-          const impactX = projectile.sprite.x
-          const impactY = projectile.sprite.y
           this.destroyActiveProjectileOnGroundImpact(projectile, i)
         }
       }
@@ -1329,8 +1321,6 @@ export class SlingshotScene extends Phaser.Scene {
 
     console.log('[SHOOT-DEBUG] Projectile ready for aiming');
   }
-
-""
 
   private setupInput(): void {
     this.input.removeAllListeners();
@@ -2394,10 +2384,6 @@ export class SlingshotScene extends Phaser.Scene {
 
   private destroyProjectileImmediately(): void {
     this.destroyProjectileOnGroundImpact('ground-immediate-current');
-  }
-
-  private destroyActiveProjectileImmediately(projectile: ProjectileData, index: number): void {
-    this.destroyActiveProjectileOnGroundImpact(projectile, index, 'ground-immediate-active');
   }
 
   private handleTargetHit(targetData: TargetData): void {
