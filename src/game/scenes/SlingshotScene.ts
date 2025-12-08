@@ -59,7 +59,6 @@ interface ProjectileData {
   fadingOut: boolean;
   hasCollided: boolean;
   shouldDestroy: boolean;
-  trailEmitter?: Phaser.GameObjects.Particles.ParticleEmitter | null;
 }
 
 interface StatusIndicatorRequest {
@@ -1357,57 +1356,7 @@ export class SlingshotScene extends Phaser.Scene {
     console.log('[SHOOT-DEBUG] Projectile ready for aiming');
   }
 
-  private createTrailEmitterForProjectile(projectile: ProjectileData): Phaser.GameObjects.Particles.ParticleEmitter | null {
-    if (!projectile) {
-      return null;
-    }
-
-    try {
-      // Create emitter directly using Phaser's default white texture
-      const emitter = this.add.particles(0, 0, '__WHITE', {
-        speed: 0,
-        scale: { start: 0.4, end: 0 },
-        alpha: { start: 0.4, end: 0 },
-        lifespan: 300,
-        tint: 0x888888
-      });
-
-      emitter.setDepth(58);
-      emitter.stop();
-      projectile.trailEmitter = emitter;
-      console.log('[PARTICLES] Trail emitter created for projectile');
-      return emitter;
-    } catch (error) {
-      if (error instanceof Error) {
-        console.error('[PARTICLES] Error creating trail emitter:', error.message);
-      } else {
-        console.error('[PARTICLES] Error creating trail emitter:', error);
-      }
-      projectile.trailEmitter = null;
-      return null;
-    }
-  }
-
-  private stopAndDestroyTrailEmitter(projectile: ProjectileData, reason: string = 'cleanup'): void {
-    if (!projectile.trailEmitter) {
-      return;
-    }
-
-    const emitter = projectile.trailEmitter;
-    projectile.trailEmitter = null;
-
-    try {
-      emitter.stop();
-      emitter.destroy();
-      console.log(`[PARTICLES] Trail emitter destroyed (${reason})`);
-    } catch (error) {
-      if (error instanceof Error) {
-        console.error(`[PARTICLES] Error destroying trail emitter (${reason}):`, error.message);
-      } else {
-        console.error(`[PARTICLES] Error destroying trail emitter (${reason}):`, error);
-      }
-    }
-  }
+""
 
   private setupInput(): void {
     this.input.removeAllListeners();
