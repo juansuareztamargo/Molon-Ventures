@@ -24,9 +24,6 @@ const HIT_TEXT_FLOAT_MS = 300;
 const HIT_TEXT_HOLD_MS = 600;
 const HIT_TEXT_FADE_MS = 700;
 
-const TRAIL_PARTICLE_TEXTURE_KEY = 'projectile-trail-pixel';
-const GROUND_IMPACT_TEXTURE_KEY = 'ground-impact-dust';
-
 interface TargetData {
   sprite: Phaser.Physics.Arcade.Sprite;
   graphic: Phaser.GameObjects.Arc;
@@ -128,7 +125,6 @@ export class SlingshotScene extends Phaser.Scene {
   private isDragging: boolean = false;
   private currentProjectile?: ProjectileData;
   private activeProjectiles: ProjectileData[] = [];
-  private trailEmitterManager: Phaser.GameObjects.Particles.ParticleEmitterManager | null = null;
   private slingshotEnabled: boolean = true;
 
   private targets: TargetData[] = [];
@@ -272,15 +268,6 @@ export class SlingshotScene extends Phaser.Scene {
       }
     });
     this.activeProjectiles = [];
-
-    if (this.trailEmitterManager) {
-      try {
-        this.trailEmitterManager.destroy();
-      } catch (_error) {
-        // Ignore cleanup errors during scene reset
-      }
-      this.trailEmitterManager = null;
-    }
 
     this.resetDragState();
 
@@ -1370,39 +1357,22 @@ export class SlingshotScene extends Phaser.Scene {
     console.log('[SHOOT-DEBUG] Projectile ready for aiming');
   }
 
-  private getOrCreateTrailEmitterManager(): Phaser.GameObjects.Particles.ParticleEmitterManager {
-    if (!this.trailEmitterManager) {
-      if (!this.textures.exists(TRAIL_PARTICLE_TEXTURE_KEY)) {
-        const graphics = this.make.graphics({ x: 0, y: 0, add: false });
-        graphics.fillStyle(0x888888, 1);
-        graphics.fillCircle(2, 2, 2);
-        graphics.generateTexture(TRAIL_PARTICLE_TEXTURE_KEY, 4, 4);
-        graphics.destroy();
-      }
-
-      this.trailEmitterManager = this.add.particles(TRAIL_PARTICLE_TEXTURE_KEY);
-      this.trailEmitterManager.setDepth(58);
-      console.log('[PARTICLES] Trail emitter manager created');
-    }
-
-    return this.trailEmitterManager;
-  }
-
   private createTrailEmitterForProjectile(projectile: ProjectileData): Phaser.GameObjects.Particles.ParticleEmitter | null {
     if (!projectile) {
       return null;
     }
 
     try {
-      const manager = this.getOrCreateTrailEmitterManager();
-      const emitter = manager.createEmitter({
+      // Create emitter directly using Phaser's default white texture
+      const emitter = this.add.particles(0, 0, '__WHITE', {
         speed: 0,
         scale: { start: 0.4, end: 0 },
         alpha: { start: 0.4, end: 0 },
         lifespan: 300,
-        emitZone: { type: 'random', source: new Phaser.Geom.Circle(0, 0, 1) }
+        tint: 0x888888
       });
 
+      emitter.setDepth(58);
       emitter.stop();
       projectile.trailEmitter = emitter;
       console.log('[PARTICLES] Trail emitter created for projectile');
@@ -2760,22 +2730,15 @@ export class SlingshotScene extends Phaser.Scene {
     try {
       console.log(`[GROUND-IMPACT-PARTICLES] Spawning at (${x.toFixed(0)}, ${y.toFixed(0)})`);
 
-      if (!this.textures.exists(GROUND_IMPACT_TEXTURE_KEY)) {
-        const graphics = this.make.graphics({ x: 0, y: 0, add: false });
-        graphics.fillStyle(0x8b7355, 1);
-        graphics.fillCircle(3, 3, 3);
-        graphics.generateTexture(GROUND_IMPACT_TEXTURE_KEY, 6, 6);
-        graphics.destroy();
-      }
-
-      const emitter = this.add.particles(0, 0, GROUND_IMPACT_TEXTURE_KEY, {
+      const emitter = this.add.particles(0, 0, '__WHITE', {
         speed: { min: -100, max: 100 },
         angle: { min: 240, max: 300 },
         scale: { start: 0.3, end: 0 },
         alpha: { start: 0.6, end: 0 },
         lifespan: 300,
         gravityY: 200,
-        blendMode: Phaser.BlendModes.NORMAL
+        blendMode: Phaser.BlendModes.NORMAL,
+        tint: 0x8b7355
       });
 
       emitter.setDepth(95);
