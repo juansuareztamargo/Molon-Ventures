@@ -24,6 +24,9 @@ const HIT_TEXT_FLOAT_MS = 300;
 const HIT_TEXT_HOLD_MS = 600;
 const HIT_TEXT_FADE_MS = 700;
 
+const TRAIL_PARTICLE_TEXTURE_KEY = 'projectile-trail-pixel';
+const GROUND_IMPACT_TEXTURE_KEY = 'ground-impact-dust';
+
 interface TargetData {
   sprite: Phaser.Physics.Arcade.Sprite;
   graphic: Phaser.GameObjects.Arc;
@@ -59,7 +62,7 @@ interface ProjectileData {
   fadingOut: boolean;
   hasCollided: boolean;
   shouldDestroy: boolean;
-  particlesEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
+  trailEmitter?: Phaser.GameObjects.Particles.ParticleEmitter | null;
 }
 
 interface StatusIndicatorRequest {
@@ -125,6 +128,7 @@ export class SlingshotScene extends Phaser.Scene {
   private isDragging: boolean = false;
   private currentProjectile?: ProjectileData;
   private activeProjectiles: ProjectileData[] = [];
+  private trailEmitterManager: Phaser.GameObjects.Particles.ParticleEmitterManager | null = null;
   private slingshotEnabled: boolean = true;
 
   private targets: TargetData[] = [];
@@ -220,7 +224,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     if (this.currentProjectile) {
       try {
-        this.stopTrailEmitter(this.currentProjectile, 'reset-state-current-cleanup');
+        this.stopAndDestroyTrailEmitter(this.currentProjectile, 'reset-state-current-cleanup');
       } catch (_error) {
         // Ignore cleanup errors during scene reset
       }
@@ -260,7 +264,7 @@ export class SlingshotScene extends Phaser.Scene {
     // Clean up any remaining active projectiles
     this.activeProjectiles.forEach((projectile) => {
       try {
-        this.stopTrailEmitter(projectile, 'reset-state-cleanup');
+        this.stopAndDestroyTrailEmitter(projectile, 'reset-state-cleanup');
         if (projectile.sprite) projectile.sprite.destroy();
         if (projectile.ring) projectile.ring.destroy();
       } catch (_error) {
@@ -268,6 +272,15 @@ export class SlingshotScene extends Phaser.Scene {
       }
     });
     this.activeProjectiles = [];
+
+    if (this.trailEmitterManager) {
+      try {
+        this.trailEmitterManager.destroy();
+      } catch (_error) {
+        // Ignore cleanup errors during scene reset
+      }
+      this.trailEmitterManager = null;
+    }
 
     this.resetDragState();
 
@@ -360,8 +373,16 @@ export class SlingshotScene extends Phaser.Scene {
       console.log(`  - fadingOut: ${this.currentProjectile.fadingOut}`)
       console.log(`  - sprite destroyed: ${this.currentProjectile.sprite?.active === false}`)
       
-      if (!isAboveGround && !this.isDragging && !this.currentProjectile.shouldDestroy) {
+      if (
+        !isAboveGround &&
+        !this.isDragging &&
+        !this.currentProjectile.shouldDestroy &&
+        !this.currentProjectile.fadingOut
+      ) {
         console.log(`[GROUND-DIAGNOSTIC] CONDITIONS MET FOR DESTRUCTION!`)
+        const impactX = this.currentProjectile.sprite.x
+        const impactY = this.currentProjectile.sprite.y
+        this.spawnGroundImpactParticles(impactX, impactY)
         this.destroyProjectileOnGroundImpact()
       } else if (!isAboveGround) {
         console.log(`[GROUND-DIAGNOSTIC] NOT destroying because:`)
@@ -413,6 +434,9 @@ export class SlingshotScene extends Phaser.Scene {
         
         if (!isAboveGround && !projectile.fadingOut && !projectile.shouldDestroy) {
           console.log(`[GROUND-DIAGNOSTIC] CONDITIONS MET FOR DESTRUCTION!`)
+          const impactX = projectile.sprite.x
+          const impactY = projectile.sprite.y
+          this.spawnGroundImpactParticles(impactX, impactY)
           this.destroyActiveProjectileOnGroundImpact(projectile, i)
         }
       }
@@ -445,6 +469,9 @@ export class SlingshotScene extends Phaser.Scene {
         this.handleOffscreenProjectile({ reason });
       } else if (hasLowVelocity && isOnGround && !this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
         console.log('[GROUND-FADE] Projectile detected on ground, destroying immediately');
+        if (this.currentProjectile.sprite) {
+          this.spawnGroundImpactParticles(this.currentProjectile.sprite.x, this.currentProjectile.sprite.y);
+        }
         this.destroyProjectileImmediately();
       }
 
@@ -460,8 +487,8 @@ export class SlingshotScene extends Phaser.Scene {
 
       // Keep particle emitter following projectile and rotate arrow to velocity direction
       if (this.currentProjectile) {
-        const trailEmitter = this.currentProjectile.particlesEmitter;
-        if (trailEmitter && !this.currentProjectile.fadingOut) {
+        const trailEmitter = this.currentProjectile.trailEmitter;
+        if (trailEmitter && !this.currentProjectile.fadingOut && !this.currentProjectile.shouldDestroy) {
           trailEmitter.setPosition(sprite.x, sprite.y);
         }
       }
@@ -519,6 +546,9 @@ export class SlingshotScene extends Phaser.Scene {
       // Handle ground collision (immediate destruction) - backup check
       if (hasLowVelocity && isOnGround && !projectile.fadingOut && !projectile.shouldDestroy) {
         console.log('[GROUND-FADE] Active projectile on ground, destroying immediately');
+        if (projectile.sprite) {
+          this.spawnGroundImpactParticles(projectile.sprite.x, projectile.sprite.y);
+        }
         this.destroyActiveProjectileImmediately(projectile, i);
         continue;
       }
@@ -534,8 +564,8 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
       // Keep particle emitter following projectile
-      const trailEmitter = projectile.particlesEmitter;
-      if (trailEmitter && !projectile.fadingOut) {
+      const trailEmitter = projectile.trailEmitter;
+      if (trailEmitter && !projectile.fadingOut && !projectile.shouldDestroy) {
         trailEmitter.setPosition(sprite.x, sprite.y);
       }
 
@@ -1309,8 +1339,6 @@ export class SlingshotScene extends Phaser.Scene {
       graphics.destroy();
     }
 
-    this.ensureTrailTexture();
-
     const sprite = this.physics.add.sprite(x, y, 'projectile-arrow');
     console.log(`[SHOOT-DEBUG] Sprite created at (${sprite.x.toFixed(2)}, ${sprite.y.toFixed(2)})`);
 
@@ -1335,95 +1363,78 @@ export class SlingshotScene extends Phaser.Scene {
       fadingOut: false,
       hasCollided: false,
       shouldDestroy: false,
+      trailEmitter: null,
     };
 
-    this.createTrailEmitter(this.currentProjectile);
+    this.createTrailEmitterForProjectile(this.currentProjectile);
     console.log('[SHOOT-DEBUG] Projectile ready for aiming');
   }
 
-  private ensureTrailTexture(): void {
-    if (!this.textures.exists('trail-particle')) {
-      const graphics = this.add.graphics();
-      graphics.fillStyle(0x888888, 1);
-      graphics.fillCircle(2, 2, 2);
-      graphics.generateTexture('trail-particle', 4, 4);
-      graphics.destroy();
-      console.log('[PARTICLES] Trail texture created (runs once)');
+  private getOrCreateTrailEmitterManager(): Phaser.GameObjects.Particles.ParticleEmitterManager {
+    if (!this.trailEmitterManager) {
+      if (!this.textures.exists(TRAIL_PARTICLE_TEXTURE_KEY)) {
+        const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+        graphics.fillStyle(0x888888, 1);
+        graphics.fillCircle(2, 2, 2);
+        graphics.generateTexture(TRAIL_PARTICLE_TEXTURE_KEY, 4, 4);
+        graphics.destroy();
+      }
+
+      this.trailEmitterManager = this.add.particles(TRAIL_PARTICLE_TEXTURE_KEY);
+      this.trailEmitterManager.setDepth(58);
+      console.log('[PARTICLES] Trail emitter manager created');
     }
+
+    return this.trailEmitterManager;
   }
 
-  private createTrailEmitter(projectile: ProjectileData): void {
+  private createTrailEmitterForProjectile(projectile: ProjectileData): Phaser.GameObjects.Particles.ParticleEmitter | null {
     if (!projectile) {
-      return;
+      return null;
     }
 
-    this.ensureTrailTexture();
+    try {
+      const manager = this.getOrCreateTrailEmitterManager();
+      const emitter = manager.createEmitter({
+        speed: 0,
+        scale: { start: 0.4, end: 0 },
+        alpha: { start: 0.4, end: 0 },
+        lifespan: 300,
+        emitZone: { type: 'random', source: new Phaser.Geom.Circle(0, 0, 1) }
+      });
 
-    // Create emitter with improved visibility settings
-    // In Phaser 3.60+, this.add.particles returns a ParticleEmitter directly
-    const emitter = this.add.particles(0, 0, 'trail-particle', {
-      speed: 0,
-      scale: { start: 0.6, end: 0 },
-      alpha: { start: 0.6, end: 0 },
-      lifespan: 300,
-      frequency: 50,
-      blendMode: 'NORMAL',
-    });
-
-    emitter.setDepth(58);
-    emitter.stop();
-    projectile.particlesEmitter = emitter;
-    console.log('[PARTICLES] Grey trail particle emitter created (improved visibility)');
+      emitter.stop();
+      projectile.trailEmitter = emitter;
+      console.log('[PARTICLES] Trail emitter created for projectile');
+      return emitter;
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error('[PARTICLES] Error creating trail emitter:', error.message);
+      } else {
+        console.error('[PARTICLES] Error creating trail emitter:', error);
+      }
+      projectile.trailEmitter = null;
+      return null;
+    }
   }
 
-  private startTrailEmitter(projectile: ProjectileData): void {
-    if (!projectile) {
+  private stopAndDestroyTrailEmitter(projectile: ProjectileData, reason: string = 'cleanup'): void {
+    if (!projectile.trailEmitter) {
       return;
     }
 
-    if (!projectile.particlesEmitter) {
-      this.createTrailEmitter(projectile);
-    }
-
-    const emitter = projectile.particlesEmitter;
-    if (!emitter) {
-      return;
-    }
-
-    // Position emitter at projectile location and start continuous emission
-    emitter.setPosition(projectile.sprite.x, projectile.sprite.y);
-    emitter.start();
-    console.log('[PARTICLES] Trail started - continuous emission enabled');
-  }
-
-  private stopTrailEmitter(projectile: ProjectileData, reason: string = 'cleanup'): void {
-    if (!projectile.particlesEmitter) {
-      console.log(`[PARTICLES] No trail emitter to stop (${reason})`);
-      return;
-    }
-
-    const emitter = projectile.particlesEmitter;
-    projectile.particlesEmitter = undefined;
+    const emitter = projectile.trailEmitter;
+    projectile.trailEmitter = null;
 
     try {
       emitter.stop();
-      console.log(`[PARTICLES] Trail emission stopped (${reason})`);
-    } catch (error) {
-      if (error instanceof Error) {
-        console.log(`[PARTICLES] Error stopping trail emitter (${reason}):`, error.message);
-      } else {
-        console.log(`[PARTICLES] Error stopping trail emitter (${reason}):`, error);
-      }
-    }
-
-    try {
       emitter.destroy();
-      console.log(`[PARTICLES] Trail emitter destroyed (${reason}) - lifecycle complete`);
+      console.log(`[PARTICLES] Trail emitter destroyed (${reason})`);
     } catch (error) {
       if (error instanceof Error) {
-        console.log(`[PARTICLES] Error destroying trail emitter (${reason}):`, error.message);
+        console.error(`[PARTICLES] Error destroying trail emitter (${reason}):`, error.message);
       } else {
-        console.log(`[PARTICLES] Error destroying trail emitter (${reason}):`, error);
+        console.error(`[PARTICLES] Error destroying trail emitter (${reason}):`, error);
       }
     }
   }
@@ -2203,14 +2214,21 @@ export class SlingshotScene extends Phaser.Scene {
     const angle = Math.atan2(velocityY, velocityX);
     this.currentProjectile.sprite.setRotation(angle);
 
-    this.startTrailEmitter(this.currentProjectile);
-
     if (!this.currentProjectile) {
       return false;
     }
 
     // CRITICAL: Capture projectile reference for collision callbacks (will be moved to activeProjectiles)
     const launchedProjectile = this.currentProjectile;
+
+    const trailEmitter =
+      launchedProjectile.trailEmitter ?? this.createTrailEmitterForProjectile(launchedProjectile);
+
+    if (trailEmitter) {
+      trailEmitter.setPosition(launchedProjectile.sprite.x, launchedProjectile.sprite.y);
+      trailEmitter.start();
+      console.log('[PARTICLES] Trail started');
+    }
 
     // Set up ground collision with callback to trigger fade immediately
     this.physics.add.collider(launchedProjectile.sprite, this.ground, () => {
@@ -2362,7 +2380,7 @@ export class SlingshotScene extends Phaser.Scene {
         console.log('[OFF-SCREEN] Error stopping physics:', error);
       }
 
-      this.stopTrailEmitter(projectile, 'offscreen-current');
+      this.stopAndDestroyTrailEmitter(projectile, 'offscreen-current');
 
       // Destroy sprite IMMEDIATELY (don't just hide it)
       console.log('[OFF-SCREEN] Destroying projectile and ring');
@@ -2430,13 +2448,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.missesInSequence++;
       this.onMiss();
 
-      // Create particle burst at impact location
-      if (projectile.sprite) {
-        const impactX = projectile.sprite.x;
-        const impactY = projectile.sprite.y;
-        console.log(`[GROUND-IMPACT] Creating dust burst for current projectile at (${impactX.toFixed(0)}, ${impactY.toFixed(0)})`);
-        this.createGroundImpactParticles(impactX, impactY);
-      }
+      // Ground impact particles are spawned when the collision is detected before this point
 
       // Stop physics immediately
       if (projectile.sprite) {
@@ -2460,7 +2472,7 @@ export class SlingshotScene extends Phaser.Scene {
       }
       
       console.log(`[GROUND-DIAGNOSTIC] Stopping particles`);
-      this.stopTrailEmitter(projectile, 'ground-impact-current');
+      this.stopAndDestroyTrailEmitter(projectile, 'ground-impact-current');
       
       // Fade out sprite and ring over 400ms
       if (projectile.sprite) {
@@ -2498,7 +2510,7 @@ export class SlingshotScene extends Phaser.Scene {
       try {
         if (projectile.sprite) projectile.sprite.destroy();
         if (projectile.ring) projectile.ring.destroy();
-        this.stopTrailEmitter(projectile, 'ground-impact-current-failsafe');
+        this.stopAndDestroyTrailEmitter(projectile, 'ground-impact-current-failsafe');
         this.currentProjectile = undefined;
         this.slingshotEnabled = true;
       } catch (_e2) {
@@ -2533,13 +2545,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.missesInSequence++;
       this.onMiss();
 
-      // Create particle burst at impact location
-      if (projectile.sprite) {
-        const impactX = projectile.sprite.x;
-        const impactY = projectile.sprite.y;
-        console.log(`[GROUND-IMPACT] Creating dust burst for active projectile at (${impactX.toFixed(0)}, ${impactY.toFixed(0)})`);
-        this.createGroundImpactParticles(impactX, impactY);
-      }
+      // Ground impact particles are spawned when the collision is detected before this point
 
       // Stop physics immediately
       if (projectile.sprite) {
@@ -2563,7 +2569,7 @@ export class SlingshotScene extends Phaser.Scene {
       }
       
       console.log(`[GROUND-DIAGNOSTIC] Stopping active projectile particles`);
-      this.stopTrailEmitter(projectile, 'ground-impact-active');
+      this.stopAndDestroyTrailEmitter(projectile, 'ground-impact-active');
       
       // Fade out sprite and ring over 400ms
       if (projectile.sprite) {
@@ -2601,7 +2607,7 @@ export class SlingshotScene extends Phaser.Scene {
       try {
         if (projectile.sprite) projectile.sprite.destroy();
         if (projectile.ring) projectile.ring.destroy();
-        this.stopTrailEmitter(projectile, 'ground-impact-active-failsafe');
+        this.stopAndDestroyTrailEmitter(projectile, 'ground-impact-active-failsafe');
         this.activeProjectiles.splice(index, 1);
         this.enableSlingshot();
       } catch (_e2) {
@@ -2633,13 +2639,7 @@ export class SlingshotScene extends Phaser.Scene {
     // Handle miss mechanics (reset streaks/bonus)
     this.onMiss();
 
-    // Create particle burst at impact location
-    if (projectile.sprite) {
-      const impactX = projectile.sprite.x;
-      const impactY = projectile.sprite.y;
-      console.log(`[GROUND-IMPACT] Creating dust burst for immediate destruction at (${impactX.toFixed(0)}, ${impactY.toFixed(0)})`);
-      this.createGroundImpactParticles(impactX, impactY);
-    }
+    // Ground impact particles are spawned when the collision is detected before this point
 
     try {
       // Stop physics immediately
@@ -2659,7 +2659,7 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[GROUND-FADE] Error stopping physics:', error);
     }
 
-    this.stopTrailEmitter(projectile, 'ground-immediate-current');
+    this.stopAndDestroyTrailEmitter(projectile, 'ground-immediate-current');
 
     // Destroy sprite and ring immediately
     try {
@@ -2695,7 +2695,7 @@ export class SlingshotScene extends Phaser.Scene {
     const projectile = this.currentProjectile;
 
     console.log(`[GROUND-DIAGNOSTIC] Destroying particles`);
-    this.stopTrailEmitter(projectile, 'ground-complete-current');
+    this.stopAndDestroyTrailEmitter(projectile, 'ground-complete-current');
 
     try {
       console.log(`[GROUND-DIAGNOSTIC] Destroying sprite and ring`);
@@ -2732,7 +2732,7 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile particles`);
-    this.stopTrailEmitter(projectile, 'ground-complete-active');
+    this.stopAndDestroyTrailEmitter(projectile, 'ground-complete-active');
 
     try {
       console.log(`[GROUND-DIAGNOSTIC] Destroying active projectile sprite and ring`);
@@ -2756,57 +2756,52 @@ export class SlingshotScene extends Phaser.Scene {
     console.log(`[GROUND-DIAGNOSTIC] completeActiveProjectileDestruction() COMPLETE. Remaining active: ${this.activeProjectiles.length}`);
   }
 
-  private createGroundImpactParticles(x: number, y: number): void {
-    console.log(`[GROUND-IMPACT] Creating ground impact particle burst at (${x.toFixed(0)}, ${y.toFixed(0)})`);
-    
-    // Clone coordinates immediately to guard against sprite destruction
-    const impactX = x;
-    const impactY = y;
-    
-    // Cache particle texture for dust effect to avoid regenerating graphics
-    const dustKey = 'dust_particle_brown';
-    if (!this.textures.exists(dustKey)) {
-      const graphics = this.add.graphics();
-      graphics.fillStyle(0x8B7355, 1);
-      graphics.fillCircle(3, 3, 3);
-      graphics.generateTexture(dustKey, 6, 6);
-      graphics.destroy();
-      console.log('[GROUND-IMPACT] Created dust particle texture');
-    }
-    
-    // Create particle emitter with explicit configuration
-    // Position at (0, 0) for absolute positioning, then use emitParticleAt
-    const emitter = this.add.particles(0, 0, dustKey, {
-      speed: { min: 50, max: 150 },
-      angle: { min: 240, max: 300 },
-      scale: { start: 0.3, end: 0 },
-      alpha: { start: 0.6, end: 0 },
-      lifespan: 300,
-      gravityY: 200,
-      frequency: -1, // Manual emission only
-      blendMode: Phaser.BlendModes.NORMAL
-    });
-    
-    // Set depth above ground (ground is at depth 0, particles at 95)
-    emitter.setDepth(95);
-    
-    console.log(`[GROUND-IMPACT] Emitter created at (0, 0), will emit at (${impactX.toFixed(0)}, ${impactY.toFixed(0)}), depth: 95, blend: NORMAL`);
-    
-    // Emit particles at the impact location using absolute positioning
-    emitter.emitParticleAt(impactX, impactY, 8);
-    console.log('[GROUND-IMPACT] Dust burst emitted (8 particles)');
-    
-    // Destroy emitter after lifespan + buffer (300ms lifespan + 200ms buffer = 500ms)
-    this.time.delayedCall(500, () => {
-      try {
-        if (emitter && emitter.active) {
-          emitter.destroy();
-          console.log('[GROUND-IMPACT] Particle emitter destroyed after timeout');
-        }
-      } catch (error) {
-        console.log('[GROUND-IMPACT] Error destroying particle emitter:', error);
+  private spawnGroundImpactParticles(x: number, y: number): void {
+    try {
+      console.log(`[GROUND-IMPACT-PARTICLES] Spawning at (${x.toFixed(0)}, ${y.toFixed(0)})`);
+
+      if (!this.textures.exists(GROUND_IMPACT_TEXTURE_KEY)) {
+        const graphics = this.make.graphics({ x: 0, y: 0, add: false });
+        graphics.fillStyle(0x8b7355, 1);
+        graphics.fillCircle(3, 3, 3);
+        graphics.generateTexture(GROUND_IMPACT_TEXTURE_KEY, 6, 6);
+        graphics.destroy();
       }
-    });
+
+      const emitter = this.add.particles(0, 0, GROUND_IMPACT_TEXTURE_KEY, {
+        speed: { min: -100, max: 100 },
+        angle: { min: 240, max: 300 },
+        scale: { start: 0.3, end: 0 },
+        alpha: { start: 0.6, end: 0 },
+        lifespan: 300,
+        gravityY: 200,
+        blendMode: Phaser.BlendModes.NORMAL
+      });
+
+      emitter.setDepth(95);
+      emitter.emitParticleAt(x, y, 8);
+      console.log('[GROUND-IMPACT-PARTICLES] 8 particles emitted');
+
+      this.time.delayedCall(350, () => {
+        try {
+          emitter.stop();
+          emitter.destroy();
+          console.log('[GROUND-IMPACT-PARTICLES] Emitter destroyed');
+        } catch (error) {
+          if (error instanceof Error) {
+            console.error('[GROUND-IMPACT-PARTICLES] Error destroying emitter:', error.message);
+          } else {
+            console.error('[GROUND-IMPACT-PARTICLES] Error destroying emitter:', error);
+          }
+        }
+      });
+    } catch (error) {
+      if (error instanceof Error) {
+        console.error('[GROUND-IMPACT-PARTICLES] Error spawning particles:', error.message);
+      } else {
+        console.error('[GROUND-IMPACT-PARTICLES] Error spawning particles:', error);
+      }
+    }
   }
 
   private handleTargetHit(targetData: TargetData): void {
@@ -3313,7 +3308,7 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[CLEANUP] Error disabling physics:', error);
     }
 
-    this.stopTrailEmitter(projectile, 'hit-current');
+    this.stopAndDestroyTrailEmitter(projectile, 'hit-current');
 
     // Destroy sprite and ring
     try {
@@ -3375,7 +3370,7 @@ export class SlingshotScene extends Phaser.Scene {
         // Ignore if already destroyed
       }
       
-      this.stopTrailEmitter(projectile, 'prepare-next-shot-current');
+      this.stopAndDestroyTrailEmitter(projectile, 'prepare-next-shot-current');
       
       this.currentProjectile = undefined;
       console.log('[CLEANUP] Projectile destroyed and reference cleared');
@@ -3451,7 +3446,7 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[CLEANUP] Error disabling physics:', error);
     }
 
-    this.stopTrailEmitter(projectile, 'hit-active');
+    this.stopAndDestroyTrailEmitter(projectile, 'hit-active');
 
     // Destroy sprite and ring
     try {
@@ -3556,7 +3551,7 @@ export class SlingshotScene extends Phaser.Scene {
         console.log('[OFF-SCREEN] Error stopping physics:', error);
       }
 
-      this.stopTrailEmitter(projectile, 'offscreen-active');
+      this.stopAndDestroyTrailEmitter(projectile, 'offscreen-active');
 
       // Destroy sprite IMMEDIATELY
       console.log('[OFF-SCREEN] Destroying projectile and ring');
@@ -3607,12 +3602,7 @@ export class SlingshotScene extends Phaser.Scene {
     // Handle miss mechanics (reset streaks/bonus)
     this.onMiss();
 
-    // Create particle burst at impact location
-    if (projectile.sprite) {
-      const impactX = projectile.sprite.x;
-      const impactY = projectile.sprite.y;
-      this.createGroundImpactParticles(impactX, impactY);
-    }
+    // Ground impact particles are spawned when the collision is detected before this point
 
     try {
       // Stop physics immediately
@@ -3632,7 +3622,7 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[GROUND-FADE] Error stopping physics:', error);
     }
 
-    this.stopTrailEmitter(projectile, 'ground-immediate-active');
+    this.stopAndDestroyTrailEmitter(projectile, 'ground-immediate-active');
 
     // Destroy sprite and ring immediately
     try {
@@ -4393,7 +4383,7 @@ export class SlingshotScene extends Phaser.Scene {
         }
         projectile.sprite.destroy();
         projectile.ring.destroy();
-        this.stopTrailEmitter(projectile, 'game-over-active');
+        this.stopAndDestroyTrailEmitter(projectile, 'game-over-active');
       } catch (_e) {
         // Ignore cleanup errors
       }
