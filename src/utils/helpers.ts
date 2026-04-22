@@ -3,7 +3,7 @@ import Phaser from 'phaser';
 export function createTextStyle(
   fontSize: string,
   color: string = '#ffffff',
-  fontFamily: string = 'Arial, sans-serif'
+  fontFamily: string = "'Orbitron', sans-serif"
 ): Phaser.Types.GameObjects.Text.TextStyle {
   return {
     fontSize,
@@ -39,7 +39,7 @@ export function createButton(
   const buttonText = scene.add.text(x, y, text, {
     fontSize: '24px',
     color: '#ffffff',
-    fontFamily: 'Arial, sans-serif',
+    fontFamily: "'Orbitron', sans-serif",
     fontStyle: 'bold',
   });
   buttonText.setOrigin(0.5);

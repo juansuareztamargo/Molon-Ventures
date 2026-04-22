@@ -1,9 +1,12 @@
+
 import Phaser from 'phaser';
 import { SCENES } from '@/config/gameConfig';
+import { TARGET_CONFIG } from '@/config/targetConfig';
 import { COLORS, INPUT_THRESHOLDS, GAME_SETTINGS, TARGET_COLORS, POWDER_REWARDS, CIRCLE_SPACING } from '@/utils/constants';
 import { createButton, createTextStyle } from '@/utils/helpers';
 
 const JOYPAD_BASE_RADIUS = 82;
+import { ParticleManager } from '@/game/managers/ParticleManager';
 const JOYPAD_KNOB_RADIUS = 26;
 const MISS_EDGE_PADDING = 50;
 const TOP_ESCAPE_PADDING = 50;
@@ -18,11 +21,9 @@ const STATUS_INDICATOR_DEPTH = 260;
 const STATUS_INDICATOR_SUBTEXT_OFFSET = 44;
 
 // Hit feedback timing constants for improved readability
-const JOYPAD_COST_HOLD_MS = 450;
-const JOYPAD_COST_FADE_MS = 400;
-const HIT_TEXT_FLOAT_MS = 300;
-const HIT_TEXT_HOLD_MS = 600;
-const HIT_TEXT_FADE_MS = 700;
+const JOYPAD_COST_HOLD_MS = 700;
+const JOYPAD_COST_FADE_MS = 600;
+
 
 interface TargetData {
   sprite: Phaser.Physics.Arcade.Sprite;
@@ -59,6 +60,7 @@ interface ProjectileData {
   fadingOut: boolean;
   hasCollided: boolean;
   shouldDestroy: boolean;
+  trailEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
 }
 
 interface StatusIndicatorRequest {
@@ -146,6 +148,7 @@ export class SlingshotScene extends Phaser.Scene {
   private dragStartX: number = 0;
   private dragStartY: number = 0;
   private shotsInCurrentSequence: number = 0;
+  
   private shotBlockedDueToPowder: boolean = false;
 
   // Advanced powder mechanics
@@ -172,6 +175,9 @@ export class SlingshotScene extends Phaser.Scene {
   private statusIndicatorQueue: StatusIndicatorRequest[] = [];
   private statusIndicatorLastRequestTime: number | null = null;
   private statusIndicatorBurstCount: number = 0;
+  
+  // Particle Manager
+  private particleManager!: ParticleManager;
   
   constructor() {
     super({ key: SCENES.SLINGSHOT });
@@ -312,16 +318,34 @@ export class SlingshotScene extends Phaser.Scene {
     console.log(`[GROUND-DIAGNOSTIC] Screen height: ${height}`);
     console.log(`[GROUND-DIAGNOSTIC] Calculated ground level: ${height - GAME_SETTINGS.GROUND_HEIGHT}`);
 
+    // Improved Ground with Gradient
+    const groundY = height - GAME_SETTINGS.GROUND_HEIGHT;
+    const groundGraphics = this.add.graphics();
+    
+    // Top gradient (Horizon)
+    groundGraphics.fillGradientStyle(0x2d3436, 0x2d3436, 0x000000, 0x000000, 1);
+    groundGraphics.fillRect(0, groundY, width, GAME_SETTINGS.GROUND_HEIGHT);
+    
+    // Add a top border line for definition
+    groundGraphics.lineStyle(2, 0x555555, 1);
+    groundGraphics.beginPath();
+    groundGraphics.moveTo(0, groundY);
+    groundGraphics.lineTo(width, groundY);
+    groundGraphics.strokePath();
+
+    // Create an invisible physics body for the ground
     this.ground = this.add.rectangle(
       width / 2,
       height - GAME_SETTINGS.GROUND_HEIGHT / 2,
       width,
       GAME_SETTINGS.GROUND_HEIGHT,
-      COLORS.GROUND
+      0x000000,
+      0 // Invisible
     );
     this.physics.add.existing(this.ground, true);
 
     this.createUI();
+    this.particleManager = new ParticleManager(this);
     this.setupInput();
     this.startCountdown();
   }
@@ -597,7 +621,7 @@ export class SlingshotScene extends Phaser.Scene {
       {
         fontSize: '120px',
         color: '#ffffff',
-        fontFamily: 'Arial, sans-serif',
+        fontFamily: "'Orbitron', sans-serif",
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 8,
@@ -674,7 +698,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private startRound(): void {
-    this.targetsInRound = this.currentRound;
+    this.targetsInRound = this.getWaveTargetCount(this.currentRound);
     this.targetsRemainingInRound = this.targetsInRound;
     this.targetsSpawnedInRound = 0;
     this.roundComplete = false;
@@ -716,6 +740,22 @@ export class SlingshotScene extends Phaser.Scene {
     
     // Start the continuous sequence
     this.startContinuousSequence();
+  }
+
+  
+  private getWaveTargetCount(round: number): number {
+    // Custom progression: 3, 5, 10, 15, 20, 25, 30, 40, 50, 75, 100
+    if (round === 1) return 3;
+    if (round === 2) return 5;
+    if (round === 3) return 10;
+    if (round === 4) return 15;
+    if (round === 5) return 20;
+    if (round === 6) return 25;
+    if (round === 7) return 30;
+    if (round === 8) return 40;
+    if (round === 9) return 50;
+    if (round === 10) return 75;
+    return 100; // Cap at 100 for round 11+
   }
 
   private startContinuousSequence(): void {
@@ -965,7 +1005,7 @@ export class SlingshotScene extends Phaser.Scene {
     }
   }
 
-  private createProgressiveRewardDisplay(circle: TargetData, breakdown: RewardBreakdown, hitColor: number): void {
+  private createProgressiveRewardDisplay(circle: TargetData, breakdown: RewardBreakdown, hitColor: number, hitQuality: string): void {
     // Remove base reward display if it exists
     this.removeRewardDisplay(circle);
     
@@ -980,99 +1020,126 @@ export class SlingshotScene extends Phaser.Scene {
     const hitColorCss = colorToCss(hitColor);
     
     // Build sequence of reward stages
-    const sequence = this.buildRewardSequence(breakdown, hitColorCss);
+    const sequence = this.buildRewardSequence(breakdown, hitColorCss, hitQuality);
     
     // Start playing the sequence
     this.playRewardSequence(x, y, sequence, 0);
   }
   
-  private buildRewardSequence(breakdown: RewardBreakdown, hitColorCss: string): RewardStageConfig[] {
+  private buildRewardSequence(breakdown: RewardBreakdown, hitColorCss: string, hitQuality: string): RewardStageConfig[] {
     const sequence: RewardStageConfig[] = [];
     const PINK = '#ff69b4';
     const BLUE = '#4169e1';
-    const impactDuration = 400;
-    const holdDuration = 400;
-    const fadeDuration = 400;
+    const impactDuration = 350; // Faster impact
+    const holdDuration = 350;
+    const fadeDuration = 300;
     
-    // Stage 1: Base amount (hit color, smallest)
+    let currentFontSize = 30; // Start 25% smaller (was 40)
+    const fontStep = 18; // Steeper growth to reach larger final size
+    
+    // Stage 1: Hit Quality (PERFECT, AWESOME, etc)
+    // Only show if it's distinctive (skip 'NOT BAD' unless you want it)
+    if (hitQuality !== 'NOT BAD') {
+        sequence.push({
+            key: 'quality',
+            text: hitQuality,
+            color: hitColorCss,
+            fontSize: currentFontSize,
+            logMessage: `Quality: ${hitQuality}`,
+            impactDuration: 400,
+            holdDuration: 400,
+            fadeDuration: 300,
+            impactScale: 1.5,
+            holdScale: 1.6,
+            fadeScale: 1.8
+        });
+        currentFontSize += fontStep;
+    }
+
+    // Stage 2: Base amount
     sequence.push({
       key: 'base',
       text: `${breakdown.baseAmount}`,
       color: hitColorCss,
-      fontSize: 44,
+      fontSize: currentFontSize,
       logMessage: `Base amount ${breakdown.baseAmount}`,
       impactDuration,
       holdDuration,
       fadeDuration,
-      impactScale: 1.2,
-      holdScale: 1.25,
-      fadeScale: 1.32
+      impactScale: 1.3,
+      holdScale: 1.35,
+      fadeScale: 1.45
     });
+    currentFontSize += fontStep;
     
-    // Stage 2: Bonus (if applicable) - pink, larger
+    // Stage 3: Bonus (if applicable)
     if (breakdown.bonusAmount > 0) {
       sequence.push({
         key: 'bonus',
         text: `+${breakdown.bonusAmount}`,
         color: PINK,
-        fontSize: 52,
+        fontSize: currentFontSize,
         logMessage: `Bonus +${breakdown.bonusAmount}`,
         impactDuration,
         holdDuration,
         fadeDuration,
-        impactScale: 1.28,
-        holdScale: 1.34,
-        fadeScale: 1.42
+        impactScale: 1.3,
+        holdScale: 1.35,
+        fadeScale: 1.45
       });
+      currentFontSize += fontStep;
       
-      // Stage 3: Intermediate total (hit color, even larger)
+      // Stage 4: Intermediate total
       sequence.push({
         key: 'intermediate',
         text: `${breakdown.intermediateAfterBonus}`,
         color: hitColorCss,
-        fontSize: 60,
+        fontSize: currentFontSize,
         logMessage: `Intermediate total ${breakdown.intermediateAfterBonus}`,
         impactDuration,
         holdDuration,
         fadeDuration,
-        impactScale: 1.34,
-        holdScale: 1.4,
-        fadeScale: 1.48
+        impactScale: 1.3,
+        holdScale: 1.35,
+        fadeScale: 1.45
       });
+      currentFontSize += fontStep;
     }
     
-    // Stage 4: Multiplier (if applicable) - blue, larger still
+    // Stage 5: Multiplier (if applicable)
     if (breakdown.multiplier > 1) {
       sequence.push({
         key: 'multiplier',
         text: `x${breakdown.multiplier}`,
         color: BLUE,
-        fontSize: 68,
+        fontSize: currentFontSize,
         logMessage: `Multiplier x${breakdown.multiplier}`,
         impactDuration,
         holdDuration,
         fadeDuration,
         impactScale: 1.4,
-        holdScale: 1.46,
-        fadeScale: 1.54
+        holdScale: 1.5,
+        fadeScale: 1.6
       });
+      currentFontSize += fontStep;
     }
     
-    // Ensure final total step is always present and largest
-    const largestFont = sequence.reduce((max, stage) => Math.max(max, stage.fontSize), 0);
-    const finalFontSize = Math.max(largestFont + 8, 64);
+    // Stage 6: Final Total details
+    // Ensure it's the biggest (target ~120px which is 50% larger than previous 80px)
+    const finalFontSize = Math.max(currentFontSize + 20, 120);
+    
     sequence.push({
       key: 'final',
       text: `${breakdown.finalTotal}`,
       color: hitColorCss,
       fontSize: finalFontSize,
       logMessage: `Final total ${breakdown.finalTotal}`,
-      impactDuration,
-      holdDuration: holdDuration + 200,
-      fadeDuration: fadeDuration + 100,
-      impactScale: 1.5,
-      holdScale: 1.56,
-      fadeScale: 1.68
+      impactDuration: 500, // Longer impact
+      holdDuration: 600,   // Longer hold
+      fadeDuration: 500,
+      impactScale: 1.6,
+      holdScale: 1.7,
+      fadeScale: 2.0 // Giant fade out
     });
     
     return sequence;
@@ -1161,7 +1228,9 @@ export class SlingshotScene extends Phaser.Scene {
       const progress = Math.min(elapsed / targetData.lifetime, 1);
       const timeRemaining = 1 - progress;
 
-      const currentRadius = Math.max(targetData.initialRadius * timeRemaining, 10);
+      // Use Lerp for smooth shrinking from startRadius down to MIN_RADIUS over the full lifetime
+      // Formula: min + (max - min) * timeRemaining (where timeRemaining goes 1.0 -> 0.0)
+      const currentRadius = TARGET_CONFIG.MIN_RADIUS + (targetData.initialRadius - TARGET_CONFIG.MIN_RADIUS) * timeRemaining;
       targetData.graphic.setRadius(currentRadius);
       targetData.ring.setRadius(currentRadius + 8);
 
@@ -1172,14 +1241,19 @@ export class SlingshotScene extends Phaser.Scene {
       targetData.ring.setPosition(targetData.fixedX, targetData.fixedY);
       targetData.sprite.setPosition(targetData.fixedX, targetData.fixedY);
 
+      // Fine-tuned progress for color thresholds (32%, 32%, 21%, 15%)
+      // Red: 0 - 0.32 (32%)
+      // Orange: 0.32 - 0.64 (32%)
+      // Green: 0.64 - 0.85 (21%)
+      // Purple: 0.85 - 1.0 (15%)
+      
       let color: number;
-      const colorPhase = timeRemaining;
-
-      if (colorPhase >= 0.75) {
+      
+      if (progress < 0.32) {
         color = TARGET_COLORS.RED;
-      } else if (colorPhase >= 0.5) {
+      } else if (progress < 0.64) {
         color = TARGET_COLORS.ORANGE;
-      } else if (colorPhase >= 0.25) {
+      } else if (progress < 0.85) {
         color = TARGET_COLORS.GREEN;
       } else {
         color = TARGET_COLORS.PURPLE;
@@ -1193,9 +1267,17 @@ export class SlingshotScene extends Phaser.Scene {
         this.currentProjectile.ring.setStrokeStyle(3, color, 0.7);
       }
 
-      const alpha = Phaser.Math.Clamp(timeRemaining * 1.5, 0, 1);
+      const alpha = Phaser.Math.Clamp(timeRemaining * 1.5, 0.15, 1);
       targetData.graphic.setAlpha(alpha);
       targetData.ring.setAlpha(alpha * 0.8);
+
+      // Scale reward text with circle (min 50%)
+      const rewardDisplay = this.rewardDisplays.get(targetData);
+      if (rewardDisplay) {
+        // Linear scaling from 1.0 down to 0.5
+        const scale = 0.5 + (0.5 * timeRemaining);
+        rewardDisplay.setScale(scale);
+      }
 
       if (progress >= 1) {
         if (!targetData.missTriggered) {
@@ -1262,38 +1344,64 @@ export class SlingshotScene extends Phaser.Scene {
 
     console.log(`[SHOOT-DEBUG] Creating projectile at (${x}, ${y})`);
 
-    if (!this.textures.exists('projectile-arrow')) {
+    if (!this.textures.exists('projectile-rocket')) {
       const graphics = this.add.graphics();
       
-      // Create arrow as line with prominent arrowhead
-      // Arrow body (shaft)
-      graphics.fillStyle(COLORS.PROJECTILE, 1);
-      graphics.fillRect(0, 14, 30, 4); // Horizontal shaft
+      // Create Rocket Shape (Pointing Right -> 0 degrees)
+      // Overall size approx 40x20
       
-      // Arrowhead (triangle)
+      // 1. Body (Cylinder/Rect) - "NEEDLE" STYLE
+      // Center Y is 16.
+      // Height 4px -> Y 14 to 18.
+      
+      // Body
+      graphics.fillStyle(0xdddddd, 1);
+      graphics.fillRect(10, 14, 20, 4); // Height 4 (was 8)
+      
+      // 2. Nose Cone (Triangle)
+      graphics.fillStyle(0xff0000, 1);
       graphics.beginPath();
-      graphics.moveTo(30, 8);  // Top of arrowhead
-      graphics.lineTo(42, 16); // Tip of arrow (pointing right)
-      graphics.lineTo(30, 24); // Bottom of arrowhead
-      graphics.lineTo(30, 8);  // Back to top
+      graphics.moveTo(30, 14);
+      graphics.lineTo(40, 16); // Tip
+      graphics.lineTo(30, 18);
       graphics.closePath();
       graphics.fillPath();
       
-      // Add white outline for visibility
-      graphics.lineStyle(2, COLORS.WHITE, 0.8);
-      graphics.strokeRect(0, 14, 30, 4);
+      // 3. Fins (Back) - tighter
+      graphics.fillStyle(0x555555, 1);
+      // Top Fin
       graphics.beginPath();
-      graphics.moveTo(30, 8);
-      graphics.lineTo(42, 16);
-      graphics.lineTo(30, 24);
-      graphics.lineTo(30, 8);
-      graphics.strokePath();
-      
-      graphics.generateTexture('projectile-arrow', 44, 32);
+      graphics.moveTo(15, 14);
+      graphics.lineTo(5, 10); // Very close
+      graphics.lineTo(10, 14);
+      graphics.closePath();
+      graphics.fillPath();
+      // Bottom Fin
+      graphics.beginPath();
+      graphics.moveTo(15, 18);
+      graphics.lineTo(5, 22); // Very close
+      graphics.lineTo(10, 18);
+      graphics.closePath();
+      graphics.fillPath();
+
+      // 4. Window (Blue circle)
+      graphics.fillStyle(0x00aaff, 1);
+      graphics.fillCircle(20, 16, 3);
+
+      // 5. Engine Glow (Rear) - Orange
+      graphics.fillStyle(0xffaa00, 1);
+      graphics.beginPath();
+      graphics.moveTo(10, 12);
+      graphics.lineTo(4, 16);
+      graphics.lineTo(10, 20);
+      graphics.closePath();
+      graphics.fillPath();
+
+      graphics.generateTexture('projectile-rocket', 44, 32);
       graphics.destroy();
     }
 
-    const sprite = this.physics.add.sprite(x, y, 'projectile-arrow');
+    const sprite = this.physics.add.sprite(x, y, 'projectile-rocket');
     console.log(`[SHOOT-DEBUG] Sprite created at (${sprite.x.toFixed(2)}, ${sprite.y.toFixed(2)})`);
 
     const body = sprite.body as Phaser.Physics.Arcade.Body;
@@ -2097,6 +2205,14 @@ export class SlingshotScene extends Phaser.Scene {
     const angle = Math.atan2(velocityY, velocityX);
     this.currentProjectile.sprite.setRotation(angle);
 
+    // Start trail effect
+    this.currentProjectile.trailEmitter = this.particleManager.createProjectileTrail(this.currentProjectile.sprite);
+    
+    // Hide the aiming ring once launched
+    if (this.currentProjectile.ring) {
+      this.currentProjectile.ring.setVisible(false);
+    }
+
     if (!this.currentProjectile) {
       return false;
     }
@@ -2109,6 +2225,13 @@ export class SlingshotScene extends Phaser.Scene {
       // Ground collision - mark for destruction
       if (!launchedProjectile.fadingOut && !launchedProjectile.shouldDestroy) {
         console.log('[GROUND-FADE] Ground collision detected for active projectile');
+        
+        // FIX: Emit explosion
+        this.particleManager.emitExplosion(launchedProjectile.sprite.x, launchedProjectile.sprite.y);
+        
+        this.missesInSequence++; // Ensure miss is counted
+        this.onMiss(); // Reset multiplier
+
         launchedProjectile.fadingOut = true;
         launchedProjectile.shouldDestroy = true;
       }
@@ -2255,6 +2378,12 @@ export class SlingshotScene extends Phaser.Scene {
       }
 
 
+      // Stop trail if it exists
+      if (projectile.trailEmitter) {
+        this.particleManager.stopTrail(projectile.trailEmitter);
+        projectile.trailEmitter = undefined;
+      }
+
       // Destroy sprite IMMEDIATELY (don't just hide it)
       console.log('[OFF-SCREEN] Destroying projectile and ring');
       try {
@@ -2345,6 +2474,15 @@ export class SlingshotScene extends Phaser.Scene {
     this.missesInSequence++;
     this.onMiss();
 
+    // Trigger explosion effect
+    this.particleManager.emitExplosion(projectile.sprite.x, projectile.sprite.y);
+    
+    // Stop the specific trail for this projectile
+    if (projectile.trailEmitter) {
+      this.particleManager.stopTrail(projectile.trailEmitter);
+      projectile.trailEmitter = undefined;
+    }
+
     this.commonProjectileCleanup(projectile, reason);
 
     this.currentProjectile = undefined;
@@ -2376,6 +2514,15 @@ export class SlingshotScene extends Phaser.Scene {
     this.missesInSequence++;
     this.onMiss();
 
+    // Trigger explosion effect
+    this.particleManager.emitExplosion(projectile.sprite.x, projectile.sprite.y);
+    
+    // Stop the specific trail for this projectile
+    if (projectile.trailEmitter) {
+      this.particleManager.stopTrail(projectile.trailEmitter);
+      projectile.trailEmitter = undefined;
+    }
+    
     this.commonProjectileCleanup(projectile, reason);
 
     this.activeProjectiles.splice(index, 1);
@@ -2399,28 +2546,36 @@ export class SlingshotScene extends Phaser.Scene {
     this.hitsInSequence++;
     this.updateSequenceProgressText();
 
-    const x = targetData.fixedX;
-    const y = targetData.fixedY;
+
     const currentColor = targetData.graphic.fillColor;
 
     let powderReward: number = POWDER_REWARDS.RED;
-    let hitQuality = 'WELL DONE';
+    let hitQuality: string = 'NOT BAD';
 
     if (currentColor === TARGET_COLORS.PURPLE) {
       powderReward = POWDER_REWARDS.PURPLE;
       hitQuality = 'PERFECT';
     } else if (currentColor === TARGET_COLORS.GREEN) {
       powderReward = POWDER_REWARDS.GREEN;
-      hitQuality = 'GOOD';
+      hitQuality = 'AWESOME'; // Green is AWESOME
     } else if (currentColor === TARGET_COLORS.ORANGE) {
       powderReward = POWDER_REWARDS.ORANGE;
-      hitQuality = 'NICE';
+      hitQuality = 'NICE'; // Orange is NICE
     } else {
       powderReward = POWDER_REWARDS.RED;
-      hitQuality = 'WELL DONE';
+      hitQuality = 'NOT BAD'; // Red is NOT BAD
     }
 
-    // Apply advanced powder mechanics - now returns breakdown
+    // Trigger FIREWORK effect
+    // Map visual tier to quality - DIRECT MAPPING
+    // hitQuality now holds 'NOT BAD', 'NICE', 'AWESOME', 'PERFECT'
+    // particleManager handles these strings directly now.
+    
+    this.particleManager.createFirework(targetData.sprite.x, targetData.sprite.y, hitQuality);
+
+    // Apply multiplier to reward if active
+    // if (this.streakMultiplier > 1) { } // Removed logic
+
     const breakdown = this.processPowderReward(powderReward, currentColor === TARGET_COLORS.PURPLE);
     const oldPowder = this.powder;
 
@@ -2434,79 +2589,23 @@ export class SlingshotScene extends Phaser.Scene {
     this.displayPowderTransactionFeedback(breakdown.finalTotal, true);
     this.animatePowderCounter(oldPowder, this.powder, true);
     
-    // Helper function to convert color number to CSS hex string
-    const colorToCss = (color: number): string => {
-      return '#' + color.toString(16).padStart(6, '0');
-    };
+
 
     // Create progressive reward display at circle center
-    this.createProgressiveRewardDisplay(targetData, breakdown, currentColor);
+    this.createProgressiveRewardDisplay(targetData, breakdown, currentColor, hitQuality);
 
-    const hitText = this.add.text(x, y - 20, hitQuality, {
-      fontSize: '24px',
-      color: colorToCss(currentColor),
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 4,
-    });
-    hitText.setOrigin(0.5);
-    hitText.setDepth(101);
-
-    const powderPopup = this.add.text(x, y + 10, `+${breakdown.finalTotal} POWDER`, {
-      fontSize: '28px',
-      color: '#FFD700',
-      fontStyle: 'bold',
-      stroke: '#000000',
-      strokeThickness: 5,
-    });
-    powderPopup.setOrigin(0.5);
-    powderPopup.setDepth(100);
-
-    // Phase 1: Float upward briefly
-    this.tweens.add({
-      targets: [hitText, powderPopup],
-      y: `-=${35}`,
-      duration: HIT_TEXT_FLOAT_MS,
-      ease: 'Cubic.easeOut',
-      onComplete: () => {
-        // Only proceed if text objects are still active
-        if (!hitText.active || !powderPopup.active) {
-          return;
-        }
-
-        // Phase 2: Hold position then fade out
-        this.tweens.add({
-          targets: [hitText, powderPopup],
-          alpha: 0,
-          duration: HIT_TEXT_FADE_MS,
-          ease: 'Quad.easeOut',
-          delay: HIT_TEXT_HOLD_MS,
-          onComplete: () => {
-            try {
-              if (hitText.active) {
-                hitText.destroy();
-              }
-              if (powderPopup.active) {
-                powderPopup.destroy();
-              }
-            } catch (_e) {
-              // Ignore if already destroyed
-            }
-          },
-        });
-      },
-    });
+    // Legacy hit feedback removed in favor of progressive reward display
 
     // Remove target immediately (both circle and sprite disappear)
     this.removeTarget(targetData);
     this.updatePowderText();
     
-    console.log('[HIT] Target processing complete, projectile cleanup will be handled by update loop');
+    console.log('[HIT] Target processing complete');
   }
 
   private removeTarget(targetData: TargetData): void {
-    // Remove reward display if it exists
-    this.removeRewardDisplay(targetData);
+    // NOTE: Do NOT remove reward display here, as it needs to persist after target death
+    // The reward display cleans itself up via tweens
     
     targetData.sprite.destroy();
     targetData.graphic.destroy();
@@ -2823,6 +2922,13 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     const projectile = this.currentProjectile;
+    
+    // Stop trail if it exists (on hit)
+    if (projectile.trailEmitter) {
+      this.particleManager.stopTrail(projectile.trailEmitter);
+      projectile.trailEmitter = undefined;
+    }
+
     this.commonProjectileCleanup(projectile, 'hit-current');
 
     this.currentProjectile = undefined;
@@ -2895,6 +3001,12 @@ export class SlingshotScene extends Phaser.Scene {
   private cleanupActiveProjectile(projectile: ProjectileData, index: number): void {
     console.log('[CLEANUP] cleanupActiveProjectile called - safe cleanup outside collision handler');
     
+    // Stop trail if it exists (on hit)
+    if (projectile.trailEmitter) {
+      this.particleManager.stopTrail(projectile.trailEmitter);
+      projectile.trailEmitter = undefined;
+    }
+
     this.commonProjectileCleanup(projectile, 'hit-active');
 
     this.activeProjectiles.splice(index, 1);
@@ -3042,6 +3154,11 @@ export class SlingshotScene extends Phaser.Scene {
     // Ground impact particles are spawned when the collision is detected before this point
 
     try {
+      if (projectile.trailEmitter) {
+        this.particleManager.stopTrail(projectile.trailEmitter);
+        projectile.trailEmitter = undefined;
+      }
+      
       // Stop physics immediately
       const body = projectile.sprite.body as Phaser.Physics.Arcade.Body | undefined;
       if (body) {
@@ -3081,18 +3198,18 @@ export class SlingshotScene extends Phaser.Scene {
     const width = this.scale.width;
     const height = this.scale.height;
 
+    // Structured powder HUD container (label, value, transaction)
+    this.powderHudPaddingX = Math.max(20, width * 0.02);
+    this.powderHudPaddingY = Math.max(24, height * 0.03); // Common baseline Y
+
     this.roundText = this.add.text(
       width / 2,
-      20,
+      this.powderHudPaddingY,
       `Round ${this.currentRound}`,
       createTextStyle('32px', '#ffffff')
     );
-    this.roundText.setOrigin(0.5, 0);
+    this.roundText.setOrigin(0.5, 0.5); // Center aligned
     this.roundText.setDepth(100);
-
-    // Structured powder HUD container (label, value, transaction)
-    this.powderHudPaddingX = Math.max(20, width * 0.02);
-    this.powderHudPaddingY = Math.max(24, height * 0.03);
 
     this.powderHudContainer = this.add.container(this.powderHudPaddingX, this.powderHudPaddingY);
     this.powderHudContainer.setDepth(100);
@@ -3100,6 +3217,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.powderLabel = this.add.text(0, 0, 'POWDER', {
       fontSize: '24px',
       color: '#ffffff',
+      fontFamily: "'Orbitron', sans-serif",
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 2
@@ -3108,6 +3226,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.powderValue = this.add.text(0, 0, this.powder.toString(), {
       fontSize: '28px',
       color: '#FFD700',
+      fontFamily: "'Orbitron', sans-serif",
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 2
@@ -3116,6 +3235,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.transactionText = this.add.text(0, 0, '', {
       fontSize: '20px',
       color: '#ffffff',
+      fontFamily: "'Orbitron', sans-serif",
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 2
@@ -3140,11 +3260,11 @@ export class SlingshotScene extends Phaser.Scene {
 
     this.sequenceProgressText = this.add.text(
       width - 20,
-      20,
+      this.powderHudPaddingY,
       `Targets: 0/${this.targetsInRound}`,
       createTextStyle('24px', '#ffffff')
     );
-    this.sequenceProgressText.setOrigin(1, 0);
+    this.sequenceProgressText.setOrigin(1, 0.5); // Align right, vertically centered
     this.sequenceProgressText.setDepth(100);
 
     this.streakCounterText = this.add.text(
@@ -3178,6 +3298,20 @@ export class SlingshotScene extends Phaser.Scene {
     );
     this.instructionsText.setOrigin(0.5, 1);
     this.instructionsText.setDepth(100);
+
+    // Fade out instructions after short delay
+    this.time.delayedCall(3000, () => {
+      if (this.instructionsText && this.instructionsText.active) {
+        this.tweens.add({
+          targets: this.instructionsText,
+          alpha: 0,
+          duration: 1000,
+          onComplete: () => {
+            if (this.instructionsText) this.instructionsText.setVisible(false);
+          }
+        });
+      }
+    });
   }
 
   private updatePowderText(): void {
@@ -3316,8 +3450,8 @@ export class SlingshotScene extends Phaser.Scene {
     this.transactionTween = this.tweens.add({
       targets: this.transactionText,
       alpha: { from: 1, to: 0 },
-      duration: 600,
-      delay: 400,
+      duration: 900, // 50% longer (was 600)
+      delay: 600,   // 50% longer (was 400)
       ease: 'Cubic.easeOut',
       onComplete: () => {
         if (this.transactionText && this.transactionText.active) {
@@ -3594,7 +3728,7 @@ export class SlingshotScene extends Phaser.Scene {
       {
         fontSize: '48px',
         color: '#ffffff',
-        fontFamily: 'Arial, sans-serif',
+        fontFamily: "'Orbitron', sans-serif",
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 6,
@@ -3610,7 +3744,7 @@ export class SlingshotScene extends Phaser.Scene {
       {
         fontSize: '72px',
         color: scoreColor,
-        fontFamily: 'Arial, sans-serif',
+        fontFamily: "'Orbitron', sans-serif",
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 8,
@@ -3626,7 +3760,7 @@ export class SlingshotScene extends Phaser.Scene {
       {
         fontSize: '24px',
         color: '#ffffff',
-        fontFamily: 'Arial, sans-serif',
+        fontFamily: "'Orbitron', sans-serif",
         align: 'center',
         stroke: '#000000',
         strokeThickness: 4,
@@ -3847,7 +3981,7 @@ export class SlingshotScene extends Phaser.Scene {
     const gameOverText = this.add.text(width / 2, height / 2 - 120, 'GAME OVER', {
       fontSize: '72px',
       color: '#e74c3c',
-      fontFamily: 'Arial, sans-serif',
+      fontFamily: "'Orbitron', sans-serif",
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 8,
@@ -3862,7 +3996,7 @@ export class SlingshotScene extends Phaser.Scene {
       {
         fontSize: '26px',
         color: '#ffffff',
-        fontFamily: 'Arial, sans-serif',
+        fontFamily: "'Orbitron', sans-serif",
         align: 'center',
         stroke: '#000000',
         strokeThickness: 4,

@@ -3,7 +3,7 @@ import { DifficultySettings } from '@/game/types';
 export const TARGET_CONFIG = {
   // Target size configuration
   START_RADIUS: 80,
-  MIN_RADIUS: 10,
+  MIN_RADIUS: 13, // ~20% of start radius (was 25, reduced for smaller final target)
   
   // Timing configuration (in milliseconds)
   SHRINK_DURATION: 5000, // Total time to shrink from start to min size
@@ -40,7 +40,7 @@ export const TARGET_CONFIG = {
     },
     NORMAL: {
       startRadius: 80,
-      minRadius: 10,
+      minRadius: 25, // HUGE INCREASE (was 14)
       shrinkDuration: 5000,
       respawnDelay: 1000,
     },
