@@ -21,8 +21,8 @@ const STATUS_INDICATOR_DEPTH = 260;
 const STATUS_INDICATOR_SUBTEXT_OFFSET = 44;
 
 // Hit feedback timing constants for improved readability
-const JOYPAD_COST_HOLD_MS = 700;
-const JOYPAD_COST_FADE_MS = 600;
+const JOYPAD_COST_HOLD_MS = 2100;  // 2x original (was 1050)
+const JOYPAD_COST_FADE_MS = 1800;  // 2x original (was 900)
 
 
 interface TargetData {
@@ -107,6 +107,7 @@ export class SlingshotScene extends Phaser.Scene {
   private powder: number = GAME_SETTINGS.INITIAL_POWDER;
   private totalPowderEarned: number = 0;
   private bestHit: number = 0;
+  private roundStartPowder: number = GAME_SETTINGS.INITIAL_POWDER; // Store powder at start of round/sequence for retry
 
   private roundText!: Phaser.GameObjects.Text;
   private powderHudContainer!: Phaser.GameObjects.Container;
@@ -124,6 +125,7 @@ export class SlingshotScene extends Phaser.Scene {
   private powderHudPaddingY: number = 0;
 
   private isDragging: boolean = false;
+  private lastDragPos: { x: number, y: number } | null = null;
   private currentProjectile?: ProjectileData;
   private activeProjectiles: ProjectileData[] = [];
   private slingshotEnabled: boolean = true;
@@ -133,6 +135,8 @@ export class SlingshotScene extends Phaser.Scene {
 
   private joypad?: JoypadUI;
   private snappedVelocity?: { vx: number; vy: number };
+
+  private hitsText?: Phaser.GameObjects.Text;
 
   private roundComplete: boolean = false;
   private gameOver: boolean = false;
@@ -298,6 +302,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.targetsRemainingInRound = 0;
     this.targetsSpawnedInRound = 0;
     this.powder = GAME_SETTINGS.INITIAL_POWDER;
+    this.roundStartPowder = GAME_SETTINGS.INITIAL_POWDER;
     this.totalPowderEarned = 0;
     this.bestHit = 0;
 
@@ -356,12 +361,13 @@ export class SlingshotScene extends Phaser.Scene {
       console.log('[UPDATE] Processing deferred projectile destruction');
       this.currentProjectile.shouldDestroy = false; // Reset flag
       // Defer cleanup to next frame to ensure we're fully outside collision handler
-      this.time.delayedCall(1, () => {
-        if (this.currentProjectile) {
-          console.log('[UPDATE] Executing deferred cleanup');
-          this.cleanupProjectileAfterHit();
-        }
-      });
+      console.log('[UPDATE] Executing deferred projectile destruction');
+      this.cleanupProjectileAfterHit();
+    }
+    
+    // Continuous joypad update loop to keep visuals synced (e.g. ring color) even when still
+    if (this.isDragging && this.lastDragPos && this.joypad && this.currentProjectile) {
+        this.updateJoypad(this.lastDragPos.x, this.lastDragPos.y);
     }
 
     // DIAGNOSTIC: Check ground collision for current projectile
@@ -438,6 +444,17 @@ export class SlingshotScene extends Phaser.Scene {
           this.destroyActiveProjectileOnGroundImpact(projectile, i)
         }
       }
+    }
+
+    // GAME OVER CHECK: End game if out of powder and no pending shots
+    // Check cost against Hits+1 (validation logic)
+    const nextCost = this.hitsInSequence + 1;
+    if (this.powder < nextCost && 
+        this.activeProjectiles.length === 0 && 
+        !this.currentProjectile &&
+        !this.gameOver) {
+        console.log('[UPDATE] Out of powder and no active shots - Triggering Game Over');
+        this.triggerGameOver();
     }
 
     // Update currentProjectile (being dragged/aimed) lifecycle
@@ -608,7 +625,13 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private startCountdown(): void {
+    // Save current powder as the start point for this round/sequence
+    // This ensures "TRY AGAIN" restores to this specific amount
+    this.roundStartPowder = this.powder;
+
     this.countdownActive = true;
+
+    // Stop any existing countdown timer
     let countdown = 3;
     
     const width = this.scale.width;
@@ -777,7 +800,7 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private spawnNextTargetInSequence(): void {
-    if (this.targetsSpawnedInRound >= this.targetsInRound) {
+    if (this.targetsSpawnedInRound >= this.targetsInRound || this.gameOver) {
       return;
     }
 
@@ -930,17 +953,25 @@ export class SlingshotScene extends Phaser.Scene {
   private spawnRewardDisplay(circle: TargetData): void {
     const baseReward = circle.baseReward;
 
+    // Determine bright text color based on base reward (proxy for stage)
+    // Adjusted colors to be more distinct as requested
+    let textColor = '#ffffff';
+    if (baseReward === 1) textColor = '#ff4444';       // Pure Light Red
+    else if (baseReward === 2) textColor = '#ffaa00';  // Vibrant Orange
+    else if (baseReward === 3) textColor = '#44ff44';  // Bright Green
+    else if (baseReward === 4) textColor = '#aa44ff';  // Bright Purple
+
     const rewardDisplay = this.add.text(
       circle.fixedX,
       circle.fixedY,
       `+${baseReward}`,
       {
         fontSize: '32px',
-        color: '#ffff00',
+        color: textColor,
+        fontFamily: "'Orbitron', sans-serif",
         fontStyle: 'bold',
-        stroke: '#000000',
-        strokeThickness: 2,
-        align: 'center'
+        stroke: '#ffd700', // Yellow outline
+        strokeThickness: 4,
       }
     ).setOrigin(0.5, 0.5);
 
@@ -1030,117 +1061,69 @@ export class SlingshotScene extends Phaser.Scene {
     const sequence: RewardStageConfig[] = [];
     const PINK = '#ff69b4';
     const BLUE = '#4169e1';
-    const impactDuration = 350; // Faster impact
-    const holdDuration = 350;
-    const fadeDuration = 300;
+    const RED = '#e74c3c';
     
-    let currentFontSize = 30; // Start 25% smaller (was 40)
-    const fontStep = 18; // Steeper growth to reach larger final size
+    // Dynamic timing and sizing
+    let stageIndex = 0;
+    const baseFontSize = 24; // Reasonable base size to avoid pixelation
     
-    // Stage 1: Hit Quality (PERFECT, AWESOME, etc)
-    // Only show if it's distinctive (skip 'NOT BAD' unless you want it)
-    if (hitQuality !== 'NOT BAD') {
-        sequence.push({
-            key: 'quality',
-            text: hitQuality,
-            color: hitColorCss,
-            fontSize: currentFontSize,
-            logMessage: `Quality: ${hitQuality}`,
-            impactDuration: 400,
-            holdDuration: 400,
-            fadeDuration: 300,
-            impactScale: 1.5,
-            holdScale: 1.6,
-            fadeScale: 1.8
-        });
-        currentFontSize += fontStep;
-    }
-
-    // Stage 2: Base amount
-    sequence.push({
-      key: 'base',
-      text: `${breakdown.baseAmount}`,
-      color: hitColorCss,
-      fontSize: currentFontSize,
-      logMessage: `Base amount ${breakdown.baseAmount}`,
-      impactDuration,
-      holdDuration,
-      fadeDuration,
-      impactScale: 1.3,
-      holdScale: 1.35,
-      fadeScale: 1.45
-    });
-    currentFontSize += fontStep;
-    
-    // Stage 3: Bonus (if applicable)
-    if (breakdown.bonusAmount > 0) {
-      sequence.push({
-        key: 'bonus',
-        text: `+${breakdown.bonusAmount}`,
-        color: PINK,
-        fontSize: currentFontSize,
-        logMessage: `Bonus +${breakdown.bonusAmount}`,
-        impactDuration,
-        holdDuration,
-        fadeDuration,
-        impactScale: 1.3,
-        holdScale: 1.35,
-        fadeScale: 1.45
-      });
-      currentFontSize += fontStep;
+    // Helper to create stage config with escalating impact
+    const createStage = (text: string, color: string, key: string, logMsg: string) => {
+      // 10% size increase per stage (smaller than before to avoid excessive size)
+      const fontSize = Math.round(baseFontSize * Math.pow(1.10, stageIndex));
+      // Moderate impact multiplier to avoid pixelation (max scale ~1.5)
+      const impactMultiplier = 1.0 + (stageIndex * 0.1);
       
-      // Stage 4: Intermediate total
-      sequence.push({
-        key: 'intermediate',
-        text: `${breakdown.intermediateAfterBonus}`,
-        color: hitColorCss,
-        fontSize: currentFontSize,
-        logMessage: `Intermediate total ${breakdown.intermediateAfterBonus}`,
-        impactDuration,
-        holdDuration,
-        fadeDuration,
-        impactScale: 1.3,
-        holdScale: 1.35,
-        fadeScale: 1.45
-      });
-      currentFontSize += fontStep;
+      const config: RewardStageConfig = {
+        key,
+        text,
+        color,
+        fontSize,
+        logMessage: logMsg,
+        impactDuration: 350 + (stageIndex * 50),
+        holdDuration: 250 + (stageIndex * 40),
+        fadeDuration: 200 + (stageIndex * 30),
+        // Much smaller scale values to prevent pixelation
+        impactScale: 1.2 * impactMultiplier,
+        holdScale: 1.3 * impactMultiplier,
+        fadeScale: 1.4 * impactMultiplier
+      };
+      
+      stageIndex++;
+      return config;
+    };
+    
+    // Always show quality (including NOT BAD in red)
+    sequence.push(createStage(hitQuality, hitQuality === 'NOT BAD' ? RED : hitColorCss, 'quality', `Quality: ${hitQuality}`));
+    
+    // Check if we have any modifiers
+    const hasModifiers = breakdown.bonusAmount > 0 || breakdown.multiplier > 1;
+    
+    if (!hasModifiers) {
+      // No modifiers: just show final total (skip base)
+      const finalConfig = createStage(`${breakdown.finalTotal}`, hitColorCss, 'final', `Final total ${breakdown.finalTotal}`);
+      sequence.push(finalConfig);
+    } else {
+      // Has modifiers: show full sequence
+      
+      // Base amount
+      sequence.push(createStage(`${breakdown.baseAmount}`, hitColorCss, 'base', `Base amount ${breakdown.baseAmount}`));
+      
+      // Bonus (if applicable)
+      if (breakdown.bonusAmount > 0) {
+        sequence.push(createStage(`+${breakdown.bonusAmount}`, PINK, 'bonus', `Bonus +${breakdown.bonusAmount}`));
+        sequence.push(createStage(`${breakdown.intermediateAfterBonus}`, hitColorCss, 'intermediate', `Intermediate total ${breakdown.intermediateAfterBonus}`));
+      }
+      
+      // Multiplier (if applicable)
+      if (breakdown.multiplier > 1) {
+        sequence.push(createStage(`x${breakdown.multiplier}`, BLUE, 'multiplier', `Multiplier x${breakdown.multiplier}`));
+      }
+      
+      // Final total
+      const finalConfig = createStage(`${breakdown.finalTotal}`, hitColorCss, 'final', `Final total ${breakdown.finalTotal}`);
+      sequence.push(finalConfig);
     }
-    
-    // Stage 5: Multiplier (if applicable)
-    if (breakdown.multiplier > 1) {
-      sequence.push({
-        key: 'multiplier',
-        text: `x${breakdown.multiplier}`,
-        color: BLUE,
-        fontSize: currentFontSize,
-        logMessage: `Multiplier x${breakdown.multiplier}`,
-        impactDuration,
-        holdDuration,
-        fadeDuration,
-        impactScale: 1.4,
-        holdScale: 1.5,
-        fadeScale: 1.6
-      });
-      currentFontSize += fontStep;
-    }
-    
-    // Stage 6: Final Total details
-    // Ensure it's the biggest (target ~120px which is 50% larger than previous 80px)
-    const finalFontSize = Math.max(currentFontSize + 20, 120);
-    
-    sequence.push({
-      key: 'final',
-      text: `${breakdown.finalTotal}`,
-      color: hitColorCss,
-      fontSize: finalFontSize,
-      logMessage: `Final total ${breakdown.finalTotal}`,
-      impactDuration: 500, // Longer impact
-      holdDuration: 600,   // Longer hold
-      fadeDuration: 500,
-      impactScale: 1.6,
-      holdScale: 1.7,
-      fadeScale: 2.0 // Giant fade out
-    });
     
     return sequence;
   }
@@ -1169,6 +1152,7 @@ export class SlingshotScene extends Phaser.Scene {
     const rewardText = this.add.text(x, y, stage.text, {
       fontSize: `${stage.fontSize}px`,
       color: stage.color,
+      fontFamily: "'Orbitron', sans-serif",
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 4,
@@ -1176,7 +1160,7 @@ export class SlingshotScene extends Phaser.Scene {
     }).setOrigin(0.5, 0.5);
     
     rewardText.setDepth(102);
-    rewardText.setScale(0.6);
+    rewardText.setScale(0.8); // Start closer to target scale to reduce pixelation
     rewardText.setAlpha(0);
     
     const impactScale = stage.impactScale ?? 1.2;
@@ -1316,6 +1300,7 @@ export class SlingshotScene extends Phaser.Scene {
     const missText = this.add.text(x, y, 'MISS', {
       fontSize: '32px',
       color: '#e74c3c',
+      fontFamily: "'Orbitron', sans-serif", // Double quotes to ensure parsing
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 5,
@@ -1478,6 +1463,7 @@ export class SlingshotScene extends Phaser.Scene {
     console.log(`[DRAG-START] Stored at (${this.dragStartX}, ${this.dragStartY})`);
 
     this.isDragging = true;
+    this.lastDragPos = { x: pointer.x, y: pointer.y };
     this.activePointer = pointer;
     this.snappedVelocity = undefined;
 
@@ -1487,6 +1473,7 @@ export class SlingshotScene extends Phaser.Scene {
     console.log('[JOYPAD-DEBUG] Joypad and projectile created for aiming, awaiting drag/release');
 
     if (this.joypad) {
+      // Center the input relative to the joypad to prevent "jumping"
       const pointerWithSetter = pointer as Phaser.Input.Pointer & {
         setPosition?: (x: number, y: number) => void;
       };
@@ -1496,14 +1483,15 @@ export class SlingshotScene extends Phaser.Scene {
       this.pointerOffsetX = this.joypad.centerX - pointer.x;
       this.pointerOffsetY = this.joypad.centerY - pointer.y;
 
+      // Initial update to draw joypad at pointer position (which is now center)
       this.updateJoypad(this.joypad.centerX, this.joypad.centerY);
     }
   }
 
   private onPointerMove(pointer: Phaser.Input.Pointer): void {
-    if (!this.isDragging || !this.joypad || !this.currentProjectile) {
-      return;
-    }
+    if (!this.isDragging) return;
+    
+    this.lastDragPos = { x: pointer.x, y: pointer.y };
 
     if (this.activePointer && pointer.id !== this.activePointer.id) {
       return;
@@ -1513,6 +1501,9 @@ export class SlingshotScene extends Phaser.Scene {
 
     const adjustedX = pointer.x + this.pointerOffsetX;
     const adjustedY = pointer.y + this.pointerOffsetY;
+    
+    // Store ADJUSTED position so update loop uses the correct reference
+    this.lastDragPos = { x: adjustedX, y: adjustedY };
 
     this.updateJoypad(adjustedX, adjustedY);
   }
@@ -1536,6 +1527,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.destroyJoypad();
       this.prepareNextShot();
       this.resetDragState();
+      this.lastDragPos = null;
       return;
     }
 
@@ -1566,6 +1558,7 @@ export class SlingshotScene extends Phaser.Scene {
     }
 
     this.resetDragState();
+    this.lastDragPos = null;
   }
 
   private clearDragPointerData(): void {
@@ -1598,6 +1591,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.dragStartX = 0;
       this.dragStartY = 0;
       this.isDragging = false;
+      this.lastDragPos = null;
       
       // Clear snapped velocity
       this.snappedVelocity = undefined;
@@ -1617,6 +1611,7 @@ export class SlingshotScene extends Phaser.Scene {
       this.isDragging = false;
       this.slingshotEnabled = false;
       this.snappedVelocity = undefined;
+      this.lastDragPos = null;
     }
   }
 
@@ -1625,6 +1620,7 @@ export class SlingshotScene extends Phaser.Scene {
     this.clearDragPointerData();
     this.dragStartX = 0;
     this.dragStartY = 0;
+    this.lastDragPos = null;
   }
 
   private enableSlingshot(): void {
@@ -1644,13 +1640,16 @@ export class SlingshotScene extends Phaser.Scene {
     const powerLine = this.add.graphics();
     const trajectoryLine = this.add.graphics();
 
-    // Calculate next shot cost (before powder is deducted)
-    const nextShotCost = this.shotsInCurrentSequence + 1;
+    // Calculate next shot cost based on HITS in sequence (+1)
+    // Starts at 1 (0 hits + 1), increases only after a hit
+    const nextShotCost = this.hitsInSequence + 1;
     
     // Create cost text showing powder cost for this shot
+    // Centered in joypad, no animation
     const costText = this.add.text(x, centerY, `-${nextShotCost}`, {
       fontSize: '28px',
       color: '#ff3333',
+      fontFamily: "'Orbitron', sans-serif",
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 3,
@@ -1675,6 +1674,14 @@ export class SlingshotScene extends Phaser.Scene {
       costText,
     };
 
+    if (this.joypad) {
+        // Revert: Knob visible (alpha 1) as requested
+        this.joypad.knob.setAlpha(1);
+        
+        // Remove projectile ring sync (keeps default)
+        // User wants "original version" behavior for inner circle
+    }
+
     console.log(`[JOYPAD] Cost label created: -${nextShotCost} powder`);
 
     if (this.currentProjectile) {
@@ -1686,35 +1693,36 @@ export class SlingshotScene extends Phaser.Scene {
   private updateJoypad(pointerX: number, pointerY: number): void {
     if (!this.joypad || !this.currentProjectile) return;
 
+    // The knob now directly follows the pointer, clamped to the base radius
     const dx = pointerX - this.joypad.centerX;
     const dy = pointerY - this.joypad.centerY;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    const maxDistance = 120;
+    const maxDistance = JOYPAD_BASE_RADIUS; // Knob can move up to the edge of the base
 
     const clampedDistance = Math.min(distance, maxDistance);
     const angle = Math.atan2(dy, dx);
 
-    const offsetX = Math.cos(angle) * clampedDistance;
-    const offsetY = Math.sin(angle) * clampedDistance;
+    const knobX = this.joypad.centerX + Math.cos(angle) * clampedDistance;
+    const knobY = this.joypad.centerY + Math.sin(angle) * clampedDistance;
 
-    this.joypad.knob.setPosition(this.joypad.centerX + offsetX, this.joypad.centerY + offsetY);
-    this.joypad.offsetX = offsetX;
-    this.joypad.offsetY = offsetY;
+    this.joypad.knob.setPosition(knobX, knobY);
+    this.joypad.offsetX = knobX - this.joypad.centerX; // Offset from center to knob
+    this.joypad.offsetY = knobY - this.joypad.centerY;
 
     if (this.currentProjectile) {
       this.currentProjectile.sprite.setPosition(this.joypad.centerX, this.joypad.centerY);
       this.currentProjectile.ring.setPosition(this.joypad.centerX, this.joypad.centerY);
 
       // Rotate arrow to point in drag direction (opposite of offset)
-      const aimAngle = Math.atan2(-offsetY, -offsetX);
+      const aimAngle = Math.atan2(-this.joypad.offsetY, -this.joypad.offsetX);
       this.currentProjectile.sprite.setRotation(aimAngle);
     }
 
     // Calculate power ratio for variable thickness
-    const dragDistance = Math.sqrt(offsetX * offsetX + offsetY * offsetY);
+    const dragDistance = Math.sqrt(this.joypad.offsetX * this.joypad.offsetX + this.joypad.offsetY * this.joypad.offsetY);
     const minDrag = INPUT_THRESHOLDS.DRAG_MIN_DISTANCE;
-    const maxDrag = maxDistance;
-    const powerRatio = Math.max(0, Math.min(1, (dragDistance - minDrag) / (maxDrag - minDrag)));
+    const maxDragForPower = JOYPAD_BASE_RADIUS; // Max distance for power calculation
+    const powerRatio = Math.max(0, Math.min(1, (dragDistance - minDrag) / (maxDragForPower - minDrag)));
     
     // Interpolate power line thickness from 2px to 6px
     const basePowerLineWidth = 2 + powerRatio * 4;
@@ -1745,7 +1753,7 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Calculate power ratio for variable thickness
     const minDrag = INPUT_THRESHOLDS.DRAG_MIN_DISTANCE;
-    const maxDrag = 120; // Joystick max distance
+    const maxDrag = JOYPAD_BASE_RADIUS; // Joystick max distance
     const powerRatio = Math.max(0, Math.min(1, (dragDistance - minDrag) / (maxDrag - minDrag)));
 
     const velocityMultiplier = 6.5;
@@ -1854,6 +1862,22 @@ export class SlingshotScene extends Phaser.Scene {
 
     // Draw trajectory but stop at circle boundary if aiming at a target
     let trajectoryLength = maxSteps;
+    
+    // Update joypad ring color to match targeted circle
+    if (this.joypad && this.joypad.base) {
+      if (isSnapped && snappedTargetData) {
+        // Match target color when snapped - update ONLY outer ring (knob stays primary)
+        const targetColor = snappedTargetData.graphic.fillColor;
+        this.joypad.base.setStrokeStyle(3, targetColor, 1);
+        
+        // Reverted: Do NOT sync projectile ring or knob color
+        // User requested: "revert to version ... inner circle didn't change its color"
+      } else {
+        // Revert to white/default when not snapped
+        this.joypad.base.setStrokeStyle(3, COLORS.WHITE, 0.55);
+      }
+    }
+
     if (isSnapped && snappedTargetData) {
       // Find where trajectory intersects circle boundary
       let testPx = this.joypad.centerX;
@@ -2008,9 +2032,12 @@ export class SlingshotScene extends Phaser.Scene {
 
     if (costText.parentContainer) {
       costText.parentContainer.remove(costText);
-      costText.x = joypad.centerX;
-      costText.y = joypad.centerY;
     }
+    
+    // Re-add to scene display list so it remains visible after container destruction
+    this.add.existing(costText);
+    costText.setPosition(joypad.centerX, joypad.centerY);
+    costText.setDepth(200); // High depth to stay visible
 
     // If holdDurationMs is specified, use a sequence of tweens (hold then fade)
     if (holdDurationMs > 0) {
@@ -2139,12 +2166,12 @@ export class SlingshotScene extends Phaser.Scene {
       return false;
     }
 
-    // Cost per shot scales with position in sequence (1st shot = 1 powder, 2nd = 2 powder, etc.)
-    const nextShotCost = this.shotsInCurrentSequence + 1;
-    
-    // Check if player has enough powder for next shot
-    if (this.powder < nextShotCost) {
-      console.log('[INPUT] Insufficient powder for shot. Have:', this.powder, 'Need:', nextShotCost);
+    // Calculate cost based on Hits (+1)
+    const cost = this.hitsInSequence + 1;
+
+    // Check if player has enough powder (unless infinite)
+    if (this.powder < cost) {
+      console.log('[INPUT] Insufficient powder for shot. Have:', this.powder, 'Need:', cost);
       this.shotBlockedDueToPowder = true;
       this.triggerGameOver();
       return false;
@@ -2258,8 +2285,9 @@ export class SlingshotScene extends Phaser.Scene {
     // Increment shot counter for this sequence
     this.shotsInCurrentSequence++;
     
-    // Cost per shot scales with position in sequence (1st shot = 1 powder, 2nd = 2 powder, 3rd = 3 powder, etc.)
-    const shotCost = this.shotsInCurrentSequence;
+    // Cost per shot scales with position in sequence
+    // CORRECT FIX: Use same logic as validation (Hits + 1) to avoid negative powder bugs
+    const shotCost = this.hitsInSequence + 1;
     const oldPowder = this.powder;
     
     // Deduct powder and animate
@@ -2331,6 +2359,7 @@ export class SlingshotScene extends Phaser.Scene {
       const missText = this.add.text(missX, missY, 'MISS', {
         fontSize: '32px',
         color: '#e74c3c',
+        fontFamily: "'Orbitron', sans-serif", // Double quotes to ensure parsing
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 5,
@@ -2625,7 +2654,7 @@ export class SlingshotScene extends Phaser.Scene {
       if (this.consecutivePerfects === 3) {
         this.bonusStageActive = true;
         this.activateBonusModeVisual();
-        this.showStatusIndicator('BONUS MODE ENABLED', '#00ff00');
+        this.showStatusIndicator('BONUS ENABLED', '#00ff00');
       }
       
       // Apply bonus multiplier
@@ -2753,16 +2782,18 @@ export class SlingshotScene extends Phaser.Scene {
     container.setAlpha(0);
 
     const main = this.add.text(0, 0, request.mainText, {
-      fontSize: '36px',
+      fontSize: '40px', // Increased by another 50% (was 27px)
       color: request.color,
+      fontFamily: "'Orbitron', sans-serif",
       fontStyle: 'bold',
       stroke: '#000000',
-      strokeThickness: 3
+      strokeThickness: 4
     }).setOrigin(0, 0.5);
 
     const sub = this.add.text(0, STATUS_INDICATOR_SUBTEXT_OFFSET, request.subText || '', {
-      fontSize: '20px',
+      fontSize: '22px', // Increased by another 50% (was 15px)
       color: request.color,
+      fontFamily: "'Orbitron', sans-serif",
       fontStyle: 'bold',
       stroke: '#000000',
       strokeThickness: 2
@@ -3055,6 +3086,7 @@ export class SlingshotScene extends Phaser.Scene {
       const missText = this.add.text(missX, missY, 'MISS', {
         fontSize: '32px',
         color: '#e74c3c',
+        fontFamily: '"Orbitron", sans-serif',
         fontStyle: 'bold',
         stroke: '#000000',
         strokeThickness: 5,
@@ -3267,6 +3299,16 @@ export class SlingshotScene extends Phaser.Scene {
     this.sequenceProgressText.setOrigin(1, 0.5); // Align right, vertically centered
     this.sequenceProgressText.setDepth(100);
 
+    // HITS Counter (New)
+    this.hitsText = this.add.text(
+      width - 20,
+      this.powderHudPaddingY + 30,
+      'HITS: 0',
+      createTextStyle('20px', '#ffff00') // Yellow for visibility
+    );
+    this.hitsText.setOrigin(1, 0.5);
+    this.hitsText.setDepth(100);
+
     this.streakCounterText = this.add.text(
       width / 2,
       80,
@@ -3450,8 +3492,8 @@ export class SlingshotScene extends Phaser.Scene {
     this.transactionTween = this.tweens.add({
       targets: this.transactionText,
       alpha: { from: 1, to: 0 },
-      duration: 900, // 50% longer (was 600)
-      delay: 600,   // 50% longer (was 400)
+      duration: 1350, // 125% longer than original 600 (another 50% on top of previous 50%)
+      delay: 900,     // 125% longer than original 400 (another 50% on top of previous 50%)
       ease: 'Cubic.easeOut',
       onComplete: () => {
         if (this.transactionText && this.transactionText.active) {
@@ -3655,11 +3697,15 @@ export class SlingshotScene extends Phaser.Scene {
   }
 
   private updateSequenceProgressText(): void {
-    if (!this.sequenceProgressText || !this.sequenceProgressText.active) {
-      return;
+    if (this.sequenceProgressText && this.sequenceProgressText.active) {
+      // Show progress as Tasks Spawned / Total (instead of Completed/Total)
+      // This addresses "Targets counter not updating correctly"
+      this.sequenceProgressText.setText(`Targets: ${this.targetsSpawnedInRound}/${this.targetsInRound}`);
     }
-    const completed = this.targetsInRound - this.targetsRemainingInRound;
-    this.sequenceProgressText.setText(`Targets: ${completed}/${this.targetsInRound}`);
+    
+    if (this.hitsText && this.hitsText.active) {
+      this.hitsText.setText(`HITS: ${this.hitsInSequence}`);
+    }
   }
 
   private handleSequenceComplete(): void {
@@ -3786,11 +3832,14 @@ export class SlingshotScene extends Phaser.Scene {
 
     const tryAgainButton = createButton(
       this,
-      width / 2 - 160,
+      width / 2 - 185, // Adjust position for wider buttons
       height / 2 + 130,
       'TRY AGAIN',
       () => {
         destroyUI();
+        
+        // Store round start powder for restore
+        const retryPowder = this.roundStartPowder;
         
         // Restart same sequence with countdown
         this.roundComplete = false;
@@ -3798,6 +3847,10 @@ export class SlingshotScene extends Phaser.Scene {
         this.hitsInSequence = 0;
         this.missesInSequence = 0;
         this.shotsInCurrentSequence = 0;
+        
+        // Restore powder to what it was at START of round/sequence
+        this.powder = retryPowder;
+        this.updatePowderText(); // Update UI immediately
         
         // Clear pending transaction feedback
         this.clearPowderTransactionFeedback();
@@ -3814,7 +3867,7 @@ export class SlingshotScene extends Phaser.Scene {
         
         this.startCountdown();
       },
-      140,
+      175, // 25% wider (was 140)
       60
     );
     tryAgainButton.setDepth(201);
@@ -3831,14 +3884,14 @@ export class SlingshotScene extends Phaser.Scene {
         this.scene.stop();
         this.scene.start(SCENES.SLINGSHOT);
       },
-      140,
+      175, // 25% wider (was 140)
       60
     );
     restartButton.setDepth(201);
 
     const menuButton = createButton(
       this,
-      width / 2 + 160,
+      width / 2 + 185, // Adjust position for wider buttons
       height / 2 + 130,
       'MENU',
       () => {
@@ -3848,7 +3901,7 @@ export class SlingshotScene extends Phaser.Scene {
         this.scene.stop();
         this.scene.start(SCENES.MAIN_MENU);
       },
-      140,
+      175, // 25% wider (was 140)
       60
     );
     menuButton.setDepth(201);
@@ -3871,6 +3924,7 @@ export class SlingshotScene extends Phaser.Scene {
       {
         fontSize: '32px',
         color: '#ffffff',
+        fontFamily: '"Orbitron", sans-serif',
         align: 'center',
         stroke: '#000000',
         strokeThickness: 4,
@@ -3941,6 +3995,12 @@ export class SlingshotScene extends Phaser.Scene {
     // Hide multiplier display on game over
     this.refreshMultiplierDisplay();
     
+    // Stop sequence timer to prevent new targets spawning
+    if (this.sequenceTimer) {
+        this.sequenceTimer.remove();
+        this.sequenceTimer = null;
+    }
+    
     // Stop all active projectiles
     this.activeProjectiles.forEach((projectile) => {
       try {
@@ -4008,31 +4068,90 @@ export class SlingshotScene extends Phaser.Scene {
 
     const restartButton = createButton(
       this,
-      width / 2 - 130,
+      width / 2, // Center
       height / 2 + 120,
       'RESTART',
       () => {
         this.scene.stop();
         this.scene.start(SCENES.SLINGSHOT);
       },
-      200,
+      175,
       60
     );
     restartButton.setDepth(201);
 
+    const tryAgainButton = createButton(
+      this,
+      width / 2 - 200, // Left
+      height / 2 + 120,
+      'TRY AGAIN',
+      () => {
+        destroyUI();
+        
+        // Store round start powder for restore
+        const retryPowder = this.roundStartPowder;
+        
+        // Restart logic
+        this.roundComplete = false;
+        this.sequenceActive = false;
+        this.hitsInSequence = 0;
+        this.missesInSequence = 0;
+        this.shotsInCurrentSequence = 0;
+        
+        // Restore powder
+        this.powder = retryPowder;
+        this.updatePowderText();
+        
+        // CRITICAL: Force clear all timers
+        this.time.removeAllEvents();
+        
+        // Clean up remaining targets to respawn them fresh
+        if (this.targets) {
+            this.targets.forEach(target => this.removeTarget(target));
+            this.targets = [];
+        }
+
+        // Clean up any projectiles
+        if (this.activeProjectiles) {
+            this.activeProjectiles.forEach(p => {
+               if (p.sprite) p.sprite.destroy();
+               if (p.ring) p.ring.destroy();
+            });
+            this.activeProjectiles = [];
+        }
+        
+        // Start countdown for retry
+        this.gameOver = false; // Reset flag!
+        this.startCountdown();
+      },
+      175,
+      60
+    );
+    tryAgainButton.setDepth(201);
+
     const menuButton = createButton(
       this,
-      width / 2 + 130,
+      width / 2 + 200, // Right
       height / 2 + 120,
       'MENU',
       () => {
         this.scene.stop();
         this.scene.start(SCENES.MAIN_MENU);
       },
-      200,
+      175,
       60
     );
     menuButton.setDepth(201);
+
+    // Helpers to clear UI
+    function destroyUI() {
+        overlay.destroy();
+        gameOverText.destroy();
+        statsText.destroy();
+        restartButton.destroy();
+        menuButton.destroy();
+        tryAgainButton.destroy();
+    }
 
     this.tweens.add({
       targets: gameOverText,

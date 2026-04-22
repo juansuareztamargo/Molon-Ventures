@@ -11,6 +11,13 @@ export class MainMenuScene extends Phaser.Scene {
   create(): void {
     const width = this.scale.width;
     const height = this.scale.height;
+    
+    // Version Text
+    this.add.text(width - 10, height - 10, 'v1.0.0', {
+        fontSize: '16px',
+        color: '#ffffff',
+        fontFamily: "'Orbitron', sans-serif"
+    }).setOrigin(1, 1).setDepth(100);
 
     // Background gradient effect using rectangles
     const gradientSteps = 20;
